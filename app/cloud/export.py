@@ -13,6 +13,7 @@ from ..utils import search_key, to_iso, utcnow
 PAST_DAYS = 30        # phân tích sẵn cho trận đã đá trong N ngày qua
 FUTURE_DAYS = 14      # và cho trận sắp đá trong N ngày tới
 FORM_SIZES = (5, 10)
+MATCH_DAYS = 400      # chỉ đẩy trận trong N ngày gần đây (đủ cả mùa hiện tại + mùa trước); lịch sử cũ chỉ để mô hình/đánh giá
 
 
 def _kv(key: str, payload, now: str) -> dict:
@@ -55,7 +56,7 @@ def publish(container, client, now=None, *, run_backtest: bool = True) -> dict:
     match_rows, window = [], []
     lo, hi = to_iso(now_dt - timedelta(days=PAST_DAYS)), to_iso(now_dt + timedelta(days=FUTURE_DAYS))
     for lg in leagues:
-        for m in repo.query_matches(league_id=lg["id"], limit=1000):
+        for m in repo.query_matches(league_id=lg["id"], date_from=to_iso(now_dt - timedelta(days=MATCH_DAYS)), limit=1000):
             match_rows.append(match_row(m, stamp))
             if lo <= m["utc_date"] <= hi:
                 window.append(m["id"])
