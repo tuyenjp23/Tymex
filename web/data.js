@@ -20,8 +20,21 @@ const auth = {
   configured: () => !!sb,
   async session() { return sb ? (await sb.auth.getSession()).data.session : null; },
   async signIn(username, password) {
-    const { error } = await sb.auth.signInWithPassword({ email: toEmail(username), password });
-    if (error) throw new Error("Sai tên đăng nhập hoặc mật khẩu.");
+    let res;
+    try {
+      res = await sb.auth.signInWithPassword({ email: toEmail(username), password });
+    } catch (e) {
+      throw new Error("Không kết nối được máy chủ đăng nhập. Kiểm tra mạng rồi thử lại.");
+    }
+    const { error } = res;
+    if (!error) return;
+    const msg = String(error.message || "");
+    // Chỉ báo "sai mật khẩu" khi Supabase thật sự trả lỗi thông tin đăng nhập; các lỗi khác nói đúng nguyên nhân
+    if (/invalid login credentials/i.test(msg)) throw new Error("Sai tên đăng nhập hoặc mật khẩu.");
+    if (/email not confirmed/i.test(msg)) throw new Error("Tài khoản chưa được xác nhận. Vào Supabase > Authentication > Users và xác nhận tài khoản.");
+    if (error.status === 429 || /rate limit|too many/i.test(msg)) throw new Error("Đã thử đăng nhập quá nhiều lần. Đợi vài phút rồi thử lại.");
+    if (/fetch|network|failed to|timeout/i.test(msg) || error.status >= 500 || error.status === 0) throw new Error("Máy chủ đăng nhập không phản hồi (" + (error.status || "mạng") + "). Thử lại sau ít phút.");
+    throw new Error("Không đăng nhập được: " + msg);
   },
   async signOut() { await sb.auth.signOut(); },
   onChange(cb) { sb?.auth.onAuthStateChange((_event, session) => cb(session)); },
