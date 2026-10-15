@@ -203,6 +203,73 @@ class Repository:
             r = c.execute("SELECT * FROM match_statistics WHERE match_id=?", (match_id,)).fetchone()
             return dict(r) if r else None
 
+    # ------------------------------------------------------------------ nhập dữ liệu lịch sử
+    def all_teams_min(self) -> list[dict]:
+        with self.db.connect() as c:
+            return _dicts(c.execute("SELECT id, provider, external_id, name, short_name, tla FROM teams"))
+
+    def find_match_near(self, league_id: int, home_id: int, away_id: int, date_from: str, date_to: str) -> dict | None:
+        """Trận cùng giải, cùng cặp đội (đúng chiều nhà/khách) trong khoảng ngày [date_from, date_to]."""
+        with self.db.connect() as c:
+            r = c.execute(
+                """SELECT id, status, provider FROM matches WHERE league_id=? AND home_team_id=? AND away_team_id=?
+                   AND utc_date >= ? AND utc_date <= ? LIMIT 1""", (league_id, home_id, away_id, date_from, date_to)).fetchone()
+            return dict(r) if r else None
+
+    def add_history_match(self, provider: str, league_id: int, m: dict, home_id: int, away_id: int) -> tuple[int, bool]:
+        """Thêm trận từ nguồn lịch sử; không ghi đè nếu (provider, external_id) đã có. Trả về (id, vừa_thêm_mới)."""
+        with self.db.connect() as c:
+            cur = c.execute(
+                """INSERT INTO matches (provider, external_id, league_id, season, matchday, stage, utc_date, status,
+                     home_team_id, away_team_id, home_score, away_score, home_ht, away_ht, winner, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(provider, external_id) DO NOTHING""",
+                (provider, m["external_id"], league_id, m.get("season"), m.get("matchday"), "REGULAR_SEASON",
+                 m["utc_date"], m["status"], home_id, away_id, m.get("home_score"), m.get("away_score"),
+                 m.get("home_ht"), m.get("away_ht"), m.get("winner"), _now()))
+            if cur.rowcount:
+                return cur.lastrowid, True
+            r = c.execute("SELECT id FROM matches WHERE provider=? AND external_id=?", (provider, m["external_id"])).fetchone()
+            return r["id"], False
+
+    def save_odds(self, match_id: int, source: str, home: float, draw: float, away: float) -> None:
+        with self.db.connect() as c:
+            c.execute(
+                """INSERT INTO match_odds (match_id, source, odds_home, odds_draw, odds_away, updated_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(match_id) DO UPDATE SET source=excluded.source, odds_home=excluded.odds_home,
+                     odds_draw=excluded.odds_draw, odds_away=excluded.odds_away, updated_at=excluded.updated_at""",
+                (match_id, source, home, draw, away, _now()))
+
+    def get_odds(self, match_id: int) -> dict | None:
+        with self.db.connect() as c:
+            r = c.execute("SELECT * FROM match_odds WHERE match_id=?", (match_id,)).fetchone()
+            return dict(r) if r else None
+
+    def history_import_done(self, source: str, league_code: str, season: int) -> bool:
+        with self.db.connect() as c:
+            return c.execute("SELECT 1 FROM history_imports WHERE source=? AND league_code=? AND season=?",
+                             (source, league_code, season)).fetchone() is not None
+
+    def mark_history_import(self, source: str, league_code: str, season: int, seen: int, added: int) -> None:
+        with self.db.connect() as c:
+            c.execute(
+                """INSERT INTO history_imports (source, league_code, season, rows_seen, rows_added, imported_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(source, league_code, season) DO UPDATE SET rows_seen=excluded.rows_seen,
+                     rows_added=excluded.rows_added, imported_at=excluded.imported_at""",
+                (source, league_code, season, seen, added, _now()))
+
+    def odds_rows_with_matches(self, league_id: int | None = None) -> list[dict]:
+        sql = MATCH_SELECT.replace("FROM matches m", ", o.odds_home, o.odds_draw, o.odds_away, o.source AS odds_source\nFROM matches m", 1)
+        sql += " JOIN match_odds o ON o.match_id = m.id WHERE m.status='FINISHED' AND m.home_score IS NOT NULL"
+        params: list[Any] = []
+        if league_id:
+            sql += " AND m.league_id=?"; params.append(league_id)
+        sql += " ORDER BY m.utc_date, m.id"
+        with self.db.connect() as c:
+            return _dicts(c.execute(sql, params))
+
     # ------------------------------------------------------------------ bảng xếp hạng
     def replace_standings(self, league_id: int, provider: str, season: int | None, rows: Iterable[StandingDTO]) -> int:
         n = 0

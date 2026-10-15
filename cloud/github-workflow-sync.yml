@@ -2,7 +2,8 @@ name: Đồng bộ dữ liệu
 
 on:
   schedule:
-    - cron: "17 */3 * * *"      # mỗi 3 giờ (giờ UTC)
+    - cron: "17 */3 * * *"      # mỗi 3 giờ (giờ UTC): đồng bộ đầy đủ
+    - cron: "41 11-21 * * *"    # mỗi giờ 11h-21h UTC: chỉ làm mới tỷ lệ cược (chạy nhẹ, gần giờ đá)
   workflow_dispatch:             # nút "Run workflow" để chạy ngay
     inputs:
       force:
@@ -33,5 +34,7 @@ jobs:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           LEAGUES: ${{ vars.LEAGUES }}
-        run: python scripts/cloud_sync.py ${{ inputs.force && '--force' || '' }}
+        run: python scripts/cloud_sync.py ${{ inputs.force && '--force' || '' }} ${{ github.event.schedule == '41 11-21 * * *' && '--odds-only' || '' }}

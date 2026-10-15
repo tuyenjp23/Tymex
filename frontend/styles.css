@@ -211,3 +211,6 @@ code, .code { font-family: Consolas, "Cascadia Mono", monospace; background: var
   #toasts { left: 1rem; right: 1rem; bottom: calc(76px + env(safe-area-inset-bottom)); max-width: none; }
   .matrix td { width: 36px; height: 30px; }
 }
+
+.mk-row { margin-bottom: .6rem; } .mk-label { font-size: .85rem; color: var(--muted); margin-bottom: .1rem; }
+.mk-row .pstrip { height: 34px; margin: .15rem 0; }

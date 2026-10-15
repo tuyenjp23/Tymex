@@ -273,6 +273,36 @@ function predictionBlock(a) {
     <p class="small muted" style="margin-top:.8rem">Dữ liệu mô hình dùng: ${p.quality.league_games} trận của giải, ${p.quality.home_games} trận của chủ nhà, ${p.quality.away_games} trận của đội khách (trong ${p.quality.lookback_days} ngày). Độ tin cậy ước lượng: <b>${esc(p.quality.reliability)}</b>. ${esc((p.notes || []).join(" "))}</p></section>`;
 }
 
+const MARKET_SOURCE = {
+  AvgC: "trung bình nhiều nhà cái lúc đóng cửa (football-data.co.uk)", Avg: "trung bình nhiều nhà cái (football-data.co.uk)",
+  PinnC: "Pinnacle lúc đóng cửa", Pinn: "Pinnacle", B365C: "Bet365 lúc đóng cửa", B365: "Bet365", BbAv: "trung bình nhiều nhà cái",
+};
+function marketSourceLabel(src) {
+  const m = /^(OddsAPI|the-odds-api|api-football):(\d+)$/.exec(src || "");
+  if (m) return `trung bình ${m[2]} nhà cái (${m[1] === "api-football" ? "API-Football" : "The Odds API"})`;
+  return MARKET_SOURCE[src] || src || "không rõ";
+}
+function marketBlock(a) {
+  const k = a.market, m = a.match;
+  if (!k) return "";
+  if (!k.available) {
+    return `<section class="block"><h2>So sánh với nhà cái</h2><div class="notice">${esc(k.reason)}</div></section>`;
+  }
+  const strip = (p, label) => `<div class="mk-row"><div class="mk-label">${label}</div>
+    <div class="pstrip" role="img" aria-label="${esc(label)}: chủ nhà ${pct(p.home * 100, 0)}%, hòa ${pct(p.draw * 100, 0)}%, khách ${pct(p.away * 100, 0)}%">
+      <div class="h" style="width:${p.home * 100}%">${pct(p.home * 100, 0)}%</div><div class="d" style="width:${p.draw * 100}%">${pct(p.draw * 100, 0)}%</div><div class="a" style="width:${p.away * 100}%">${pct(p.away * 100, 0)}%</div></div></div>`;
+  const names = { home: `${m.home_name} thắng`, draw: "Hòa", away: `${m.away_name} thắng` };
+  const sign = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + pct(Math.abs(v) * 100, 0);
+  const tbl = k.model ? `<div class="t-scroll"><table class="t"><thead><tr><th>Kết quả</th><th class="r">Mô hình</th><th class="r">Thị trường</th><th class="r">Chênh lệch (điểm %)</th><th class="r">Tỷ lệ cược</th></tr></thead><tbody>${["home", "draw", "away"].map((x) =>
+    `<tr><td>${esc(names[x])}</td><td class="r num">${pct(k.model[x] * 100, 0)}%</td><td class="r num">${pct(k.market[x] * 100, 0)}%</td><td class="r num">${sign(k.diff[x])}</td><td class="r num">${num(k.odds[x])}</td></tr>`).join("")}</tbody></table></div>` : "";
+  return `<section class="block"><h2>So sánh với nhà cái</h2>
+    <p class="block-sub">Nguồn: ${esc(marketSourceLabel(k.source))}. Cập nhật lúc ${esc(fmtStamp(k.updated_at))} (${esc(tzLabel())}). Đã loại phần lợi nhuận của nhà cái (khoảng ${pct(k.margin * 100, 1)}%).</p>
+    ${k.model ? strip(k.model, "Mô hình Poisson") : ""}${strip(k.market, "Thị trường cược")}
+    <div class="plabels"><span>${esc(m.home_name)} thắng</span><span>Hòa</span><span>${esc(m.away_name)} thắng</span></div>
+    ${tbl}
+    <div class="notice ${k.level === "agree" || k.level === "none" ? "" : "warn"}" style="margin-top:.8rem">${esc(k.verdict)}</div></section>`;
+}
+
 function formBlock(a, n) {
   const col = (name, f, cls) => `<div><h3>${esc(name)} <span class="muted small">(${cls})</span></h3>
     <div class="chips" style="margin-top:.5rem">${f.games.map((g) => resChip(g.result)).join("") || '<span class="muted">Chưa có dữ liệu</span>'}</div>
@@ -352,7 +382,7 @@ async function pageMatch(parts) {
         <div class="versus"><div class="vteam home">${crest(m.home_crest, m.home_name)}<h2>${esc(m.home_name)}</h2><span class="role">Chủ nhà (sân nhà)</span></div>
         <div class="vscore">${has ? `${m.home_score} - ${m.away_score}` : "vs"}<small>${esc(STATUS_LABEL[m.status] || m.status)}${done && m.home_ht !== null ? ` · H1 ${m.home_ht}-${m.away_ht}` : ""}</small></div>
         <div class="vteam away">${crest(m.away_crest, m.away_name)}<h2>${esc(m.away_name)}</h2><span class="role">Đội khách (sân khách)</span></div></div></section>`;
-    app.insertAdjacentHTML("beforeend", predictionBlock(a) + formBlock(a, a.form_n) + venueBlock(a) + h2hBlock(a));
+    app.insertAdjacentHTML("beforeend", predictionBlock(a) + marketBlock(a) + formBlock(a, a.form_n) + venueBlock(a) + h2hBlock(a));
     app.insertAdjacentHTML("beforeend", `<section class="block"><h2>Thống kê nâng cao</h2><div class="notice">${esc(a.advanced.available ? "Có dữ liệu nâng cao." : a.advanced.reason)}</div></section>`);
     app.insertAdjacentHTML("beforeend", conclusionBlock(a));
     app.appendChild(await articleBlock(id));

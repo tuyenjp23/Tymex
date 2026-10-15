@@ -143,4 +143,23 @@ CREATE TABLE IF NOT EXISTS data_sync_logs (
     message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sync_logs ON data_sync_logs (provider, league_code, started_at);
+
+CREATE TABLE IF NOT EXISTS match_odds (
+    match_id INTEGER PRIMARY KEY REFERENCES matches(id),
+    source TEXT NOT NULL,              -- ví dụ AvgC = trung bình tỷ lệ cược lúc đóng cửa (football-data.co.uk)
+    odds_home REAL NOT NULL,
+    odds_draw REAL NOT NULL,
+    odds_away REAL NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS history_imports (
+    source TEXT NOT NULL,
+    league_code TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    rows_seen INTEGER NOT NULL DEFAULT 0,
+    rows_added INTEGER NOT NULL DEFAULT 0,
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (source, league_code, season)
+);
 """

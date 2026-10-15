@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..analytics.conclusions import build_conclusions
 from ..analytics.stats import head_to_head, team_form, venue_stats
 from ..database.repository import Repository
+from ..odds.compare import build_market_block
 from ..utils import to_iso
 from .prediction_service import PredictionService
 
@@ -31,13 +32,14 @@ class AnalysisService:
         h2h = head_to_head(pool, home_id, away_id, kickoff, 10, exclude_id=match["id"])
         prediction = self._prediction_block(match)
         advanced = self._advanced(match)
+        market = self._market(match, prediction)
         conclusions = build_conclusions(match["home_name"], match["away_name"], home_form, away_form, home_venue,
                                         away_venue, h2h, prediction, advanced["available"])
         return {
             "match": match, "form_n": form_n, "data_scope_note": DATA_SCOPE_NOTE,
             "form": {"home": home_form, "away": away_form},
             "venue": {"home": home_venue, "away": away_venue},
-            "head_to_head": h2h, "advanced": advanced, "prediction": prediction, "conclusions": conclusions,
+            "head_to_head": h2h, "advanced": advanced, "prediction": prediction, "market": market, "conclusions": conclusions,
             "is_test_data": match["provider"] == "fixture",
         }
 
@@ -66,6 +68,10 @@ class AnalysisService:
                         "trước trận nên không được đưa vào thống kê độ chính xác.")
         out["created_at"] = to_iso(self.predictions.now())
         return out
+
+    def _market(self, match: dict, prediction: dict) -> dict:
+        """So sánh với tỷ lệ cược (nếu có). Trận đã đá dùng tỷ lệ cược lúc đóng cửa nếu đã nhập từ football-data.co.uk."""
+        return build_market_block(self.repo.get_odds(match["id"]), prediction, match["home_name"], match["away_name"])
 
     def _advanced(self, match: dict) -> dict:
         stats = self.repo.get_match_statistics(match["id"])
