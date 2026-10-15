@@ -246,6 +246,20 @@ class Repository:
             r = c.execute("SELECT * FROM match_odds WHERE match_id=?", (match_id,)).fetchone()
             return dict(r) if r else None
 
+    def reset_history_matches(self, providers: Sequence[str]) -> int:
+        """Xóa các trận do nguồn lịch sử thêm vào (và dữ liệu phụ thuộc) để nhập lại từ đầu. Không đụng trận của football-data.org."""
+        ph = ",".join("?" * len(providers))
+        ids = f"SELECT id FROM matches WHERE provider IN ({ph})"
+        with self.db.connect() as c:
+            n = c.execute(f"SELECT COUNT(*) FROM matches WHERE provider IN ({ph})", list(providers)).fetchone()[0]
+            c.execute(f"DELETE FROM prediction_results WHERE match_id IN ({ids})", list(providers))
+            c.execute(f"DELETE FROM predictions WHERE match_id IN ({ids})", list(providers))
+            for table in ("analysis_articles", "match_statistics", "match_odds"):
+                c.execute(f"DELETE FROM {table} WHERE match_id IN ({ids})", list(providers))
+            c.execute(f"DELETE FROM matches WHERE provider IN ({ph})", list(providers))
+            c.execute(f"DELETE FROM history_imports WHERE source IN ({ph})", list(providers))
+            return n
+
     def history_import_done(self, source: str, league_code: str, season: int) -> bool:
         with self.db.connect() as c:
             return c.execute("SELECT 1 FROM history_imports WHERE source=? AND league_code=? AND season=?",

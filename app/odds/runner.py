@@ -48,6 +48,8 @@ def refresh_upcoming_odds(repo, providers: Sequence, *, now=None, hours_ahead: f
             out["skipped"].append(f"{code}: vừa cập nhật")
             continue
         plan.append((next_kick, code, league, end))
+    if not plan and not out["skipped"]:
+        out["skipped"].append(f"không có trận nào sắp đá trong {hours_ahead:g} giờ tới ở các giải {', '.join(codes or DEFAULT_CODES)} (không cần gọi nguồn nào)")
     plan.sort(key=lambda x: x[0])
     resolver = TeamResolver(repo)
     for _, code, league, end in plan:

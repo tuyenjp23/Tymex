@@ -13,6 +13,8 @@ from .sources import (
 from .teams import TeamResolver
 
 SRC_CO_UK, SRC_OF = "football-data.co.uk", "openfootball"
+# Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
+RESOLVER_VERSION = 2
 
 
 def default_fetch(url: str) -> bytes | None:
@@ -37,6 +39,11 @@ def run_history(repo, *, seasons: int = 5, league_codes: list[str] | None = None
     today = today or utcnow().date()
     cur = season_start_year(today)
     specs = [BY_CODE[c] for c in (league_codes or [x["code"] for x in HIST_LEAGUES]) if c in BY_CODE]
+    if not repo.history_import_done("resolver", "version", RESOLVER_VERSION):
+        removed = repo.reset_history_matches((SRC_CO_UK, SRC_OF))
+        repo.mark_history_import("resolver", "version", RESOLVER_VERSION, 0, 0)
+        if removed:
+            log(f"  * Đặt lại lịch sử (đổi cách ghép tên đội): xóa {removed} trận cũ, nhập lại từ đầu")
     resolver = TeamResolver(repo)
     totals = {"added": 0, "duplicates": 0, "odds": 0, "errors": []}
     now_iso = to_iso(utcnow())

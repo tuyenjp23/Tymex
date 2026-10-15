@@ -34,6 +34,13 @@ ALIASES = {
 }
 
 
+# Đội dự bị/trẻ (Real Sociedad B, Villarreal II...) là đội KHÁC với đội chính: không bao giờ ghép gần đúng giữa hai nhóm này
+RESERVE_TOKENS = {"b", "ii", "c", "u19", "u21", "u23"}
+
+# Cặp tên giống nhau nhưng là hai CLB khác nhau: cấm ghép (dạng đã chuẩn hóa)
+DENY_PAIRS = {frozenset({"reggiana", "reggina"})}
+
+
 def norm(name: str | None) -> str:
     s = search_key(name or "")
     s = s.replace("&", " and ").replace("'", "").replace("’", "")
@@ -44,6 +51,11 @@ def norm(name: str | None) -> str:
 
 def _tokens(key: str) -> set[str]:
     return set(key.split())
+
+
+def is_reserve(key: str) -> bool:
+    toks = key.split()
+    return len(toks) >= 2 and toks[-1] in RESERVE_TOKENS
 
 
 class TeamResolver:
@@ -64,6 +76,13 @@ class TeamResolver:
             ks = {norm(t["name"]), norm(t.get("short_name")), norm(t.get("tla"))}
             self.keys[t["id"]] = {k for k in ks if k}
         self.names = {t["id"]: t["name"] for t in self.teams}
+        self.reserve_ids = {t["id"] for t in self.teams if is_reserve(norm(t["name"]))}
+
+    def _allowed(self, form: str, tid: int) -> bool:
+        """Đội dự bị chỉ ghép với đội dự bị, đội chính chỉ ghép với đội chính; và không nằm trong danh sách cấm."""
+        if is_reserve(form) != (tid in self.reserve_ids):
+            return False
+        return not any(frozenset({form, k}) in DENY_PAIRS for k in self.keys[tid])
 
     def _exact(self, form: str) -> list[int]:
         return [tid for tid, ks in self.keys.items() if form in ks]
@@ -73,11 +92,13 @@ class TeamResolver:
         ft = _tokens(form)
         if not ft or len(form) < 4:
             return []
-        return [tid for tid, ks in self.keys.items() if any(ft <= _tokens(k) for k in ks)]
+        return [tid for tid, ks in self.keys.items() if self._allowed(form, tid) and any(ft <= _tokens(k) for k in ks)]
 
     def _close(self, form: str) -> list[int]:
         scored = []
         for tid, ks in self.keys.items():
+            if not self._allowed(form, tid):
+                continue
             best = max((difflib.SequenceMatcher(None, form, k).ratio() for k in ks), default=0)
             if best >= 0.88:
                 scored.append((best, tid))

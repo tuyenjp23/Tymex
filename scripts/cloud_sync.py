@@ -67,10 +67,21 @@ def main() -> int:
             leagues = [c.strip() for c in os.environ.get("HISTORY_LEAGUES", "").split(",") if c.strip()] or None
             hist = run_history(container.repo, seasons=int(os.environ.get("HISTORY_SEASONS") or 5), league_codes=leagues)
             print("Lịch sử:", hist["summary"])
-            for name in hist["new_teams_created"][:40]:
-                print("  (đội mới, chưa ghép được với đội có sẵn):", name)
-            for pair in hist["fuzzy_matches"][:40]:
-                print("  (ghép gần đúng):", pair)
+            report = [("doi_moi", n, "") for n in hist["new_teams_created"]]
+            report += [("ghep_gan_dung", *p.split(" -> ", 1)) for p in hist["fuzzy_matches"] if " -> " in p]
+            if report:
+                import csv, io   # noqa: PLC0415,E401
+                buf = io.StringIO()
+                w = csv.writer(buf, lineterminator="\n")
+                w.writerow(["loai", "ten_nguon", "khop_voi"])
+                w.writerows(report)
+                print("--- DANH SÁCH TÊN ĐỘI CẦN KIỂM TRA (loai,ten_nguon,khop_voi) ---")
+                print(buf.getvalue().rstrip("\n"))
+                print("--- HẾT DANH SÁCH ---")
+                try:   # bản CSV đầy đủ, mở được bằng Excel (Supabase > Storage > tymex-private > team_names.csv)
+                    client.upload_object(BUCKET, "team_names.csv", buf.getvalue().encode("utf-8-sig"))
+                except Exception as exc:   # noqa: BLE001
+                    print("Cảnh báo: không lưu được team_names.csv:", type(exc).__name__)
             from app.prediction.benchmark import compare_with_odds   # noqa: PLC0415
             bench = compare_with_odds(container.repo)
             o = bench["overall"]
