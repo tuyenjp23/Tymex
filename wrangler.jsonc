@@ -1,0 +1,8 @@
+{
+  // Cấu hình để Cloudflare Workers phục vụ giao diện tĩnh trong thư mục web/
+  "name": "tymex",
+  "compatibility_date": "2026-01-01",
+  "assets": {
+    "directory": "./web"
+  }
+}
