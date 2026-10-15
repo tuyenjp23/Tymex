@@ -14,7 +14,7 @@ from .teams import TeamResolver
 
 SRC_CO_UK, SRC_OF = "football-data.co.uk", "openfootball"
 # Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
-RESOLVER_VERSION = 3
+RESOLVER_VERSION = 4
 
 
 def default_fetch(url: str) -> bytes | None:

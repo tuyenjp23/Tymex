@@ -15,6 +15,15 @@ from .leagues import MAIN_PROVIDER
 STOP = {
     "fc", "afc", "cf", "sc", "ssc", "ss", "ac", "acf", "as", "us", "rc", "rcd", "ud", "cd", "ca", "sd", "sv", "fsv",
     "vfl", "vfb", "tsg", "uc", "de", "del", "di", "da", "the", "club", "calcio", "balompie", "futbol",
+    "ssv", "tsv", "spvgg", "bsc", "hsc",
+}
+
+# Từ chung chung (đứng một mình không đủ xác định một CLB): không dùng làm "tên ngắn" để gộp tên dài vào
+# (vd 'athletic' của Athletic Club không được hút 'Charlton Athletic' / 'Wigan Athletic')
+GENERIC_TOKENS = {
+    "athletic", "atletico", "united", "city", "town", "rovers", "wanderers", "county", "albion", "rangers", "wednesday",
+    "argyle", "hotspur", "forest", "villa", "real", "racing", "sporting", "dynamo", "olympique", "borussia", "eintracht",
+    "fortuna", "hansa", "inter", "internazionale",
 }
 
 # khóa = tên (đã chuẩn hóa) trong football-data.co.uk / openfootball; giá trị = dạng chuẩn hóa của tên trong football-data.org
@@ -83,7 +92,8 @@ class TeamResolver:
         for t in self.teams:
             ks = {norm(t["name"]), norm(t.get("short_name")), norm(t.get("tla"))}
             self.keys[t["id"]] = {k for k in ks if k}
-            self.name_keys[t["id"]] = {k for k in (norm(t["name"]), norm(t.get("short_name"))) if k and len(k) >= 4}
+            self.name_keys[t["id"]] = {k for k in (norm(t["name"]), norm(t.get("short_name")))
+                                       if k and len(k) >= 3 and not _tokens(k) <= GENERIC_TOKENS}
         self.names = {t["id"]: t["name"] for t in self.teams}
         self.reserve_ids = {t["id"] for t in self.teams if is_reserve(norm(t["name"]))}
 
@@ -152,9 +162,11 @@ class TeamResolver:
         tid = self.lookup(raw_name)
         if tid is None:                                  # 4) không chắc → tạo đội mới, báo lại
             base = norm(raw_name)
-            tid = self.repo.upsert_team(self.new_provider, TeamDTO(external_id=f"hist:{base or raw_name.lower()}", name=raw_name))
+            canon = ALIASES.get(base)                    # tên viết tắt có bí danh ('Sheffield Weds') → nhớ luôn dạng đầy đủ để tên dài sau này khớp
+            tid = self.repo.upsert_team(self.new_provider, TeamDTO(external_id=f"hist:{base or raw_name.lower()}", name=raw_name,
+                                                                   short_name=canon))
             self.teams.append({"id": tid, "provider": self.new_provider, "external_id": f"hist:{base}", "name": raw_name,
-                               "short_name": None, "tla": None})
+                               "short_name": canon, "tla": None})
             self._rebuild()
             self.created.append(raw_name)
         self._cache[raw_name] = tid

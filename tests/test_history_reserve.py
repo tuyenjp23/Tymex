@@ -109,3 +109,27 @@ def test_short_and_long_french_name_are_one_team(repo):
     _teams(repo, ["Arsenal FC"])
     r = TeamResolver(repo)
     assert r.resolve("RC Lens") == r.resolve("Racing Club de Lens")
+
+
+MORE_PAIRS = [("Charlton", "Charlton Athletic FC"), ("Wigan", "Wigan Athletic FC"), ("Sheffield Weds", "Sheffield Wednesday FC"),
+              ("West Brom", "West Bromwich Albion FC"), ("QPR", "Queens Park Rangers FC"), ("Sp Gijon", "Sporting Gijón"),
+              ("St Etienne", "AS Saint-Étienne"), ("Ulm", "SSV Ulm 1846")]
+MAIN = ["Athletic Club", "Paris Saint-Germain", "RCD Espanyol de Barcelona", "Arsenal FC"]
+
+
+def test_remaining_split_clubs_short_name_first(repo):
+    """Các cặp còn bị tách đôi trong log thật lần trước; có sẵn 'Athletic Club' (từ 'athletic' từng làm kết quả mơ hồ)."""
+    _teams(repo, MAIN)
+    r = TeamResolver(repo)
+    for short, long_ in MORE_PAIRS:
+        assert r.resolve(short) == r.resolve(long_), f"{short} / {long_}"
+    assert len({r.resolve(s) for s, _ in MORE_PAIRS}) == len(MORE_PAIRS)
+    assert r.names[r.resolve("Wigan")] != "Athletic Club"
+
+
+def test_remaining_split_clubs_long_name_first(repo):
+    _teams(repo, MAIN)
+    r = TeamResolver(repo)
+    for short, long_ in MORE_PAIRS:
+        assert r.resolve(long_) == r.resolve(short), f"{long_} / {short}"
+    assert len({r.resolve(l) for _, l in MORE_PAIRS}) == len(MORE_PAIRS)
