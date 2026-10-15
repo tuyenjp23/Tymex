@@ -37,6 +37,13 @@ ALIASES = {
 # Đội dự bị/trẻ (Real Sociedad B, Villarreal II...) là đội KHÁC với đội chính: không bao giờ ghép gần đúng giữa hai nhóm này
 RESERVE_TOKENS = {"b", "ii", "c", "u19", "u21", "u23"}
 
+# Tên thành phố có NHIỀU CLB (Barcelona: FC Barcelona / Espanyol; Paris: PSG / Paris FC...): không bao giờ tự ghép theo tập con từ,
+# chỉ khớp chính xác hoặc qua bí danh
+AMBIGUOUS_CITIES = {
+    "barcelona", "madrid", "paris", "milan", "manchester", "sheffield", "london", "liverpool", "nottingham", "bristol",
+    "berlin", "genoa", "turin", "rome", "seville", "glasgow",
+}
+
 # Cặp tên giống nhau nhưng là hai CLB khác nhau: cấm ghép (dạng đã chuẩn hóa)
 DENY_PAIRS = {frozenset({"reggiana", "reggina"})}
 
@@ -72,9 +79,11 @@ class TeamResolver:
 
     def _rebuild(self) -> None:
         self.keys: dict[int, set[str]] = {}
+        self.name_keys: dict[int, set[str]] = {}
         for t in self.teams:
             ks = {norm(t["name"]), norm(t.get("short_name")), norm(t.get("tla"))}
             self.keys[t["id"]] = {k for k in ks if k}
+            self.name_keys[t["id"]] = {k for k in (norm(t["name"]), norm(t.get("short_name"))) if k and len(k) >= 4}
         self.names = {t["id"]: t["name"] for t in self.teams}
         self.reserve_ids = {t["id"] for t in self.teams if is_reserve(norm(t["name"]))}
 
@@ -90,9 +99,16 @@ class TeamResolver:
     def _subset(self, form: str) -> list[int]:
         """Tên nguồn ngắn hơn và là tập con các từ của tên đội (vd 'newcastle' ⊂ 'newcastle united')."""
         ft = _tokens(form)
-        if not ft or len(form) < 4:
+        if not ft or len(form) < 4 or form in AMBIGUOUS_CITIES:
             return []
-        return [tid for tid, ks in self.keys.items() if self._allowed(form, tid) and any(ft <= _tokens(k) for k in ks)]
+        out = []
+        for tid, ks in self.keys.items():
+            if not self._allowed(form, tid):
+                continue
+            # tên nguồn ngắn hơn tên đội ('newcastle' ⊂ 'newcastle united') hoặc dài hơn ('birmingham city' ⊃ 'birmingham')
+            if any(ft <= _tokens(k) for k in ks) or any(_tokens(k) <= ft for k in self.name_keys[tid] if k not in AMBIGUOUS_CITIES):
+                out.append(tid)
+        return out
 
     def _close(self, form: str) -> list[int]:
         scored = []

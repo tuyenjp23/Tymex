@@ -258,6 +258,11 @@ class Repository:
                 c.execute(f"DELETE FROM {table} WHERE match_id IN ({ids})", list(providers))
             c.execute(f"DELETE FROM matches WHERE provider IN ({ph})", list(providers))
             c.execute(f"DELETE FROM history_imports WHERE source IN ({ph})", list(providers))
+            # đội do nguồn lịch sử tạo (external_id 'hist:...') không còn trận nào → xóa luôn để nhập lại không giữ đội bị tách đôi
+            c.execute("""DELETE FROM teams WHERE external_id LIKE 'hist:%'
+                           AND id NOT IN (SELECT home_team_id FROM matches)
+                           AND id NOT IN (SELECT away_team_id FROM matches)
+                           AND id NOT IN (SELECT team_id FROM standings)""")
             return n
 
     def history_import_done(self, source: str, league_code: str, season: int) -> bool:
