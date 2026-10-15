@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1626">
+  <title>Football Analytics cá nhân</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Football Analytics</a>
+    <nav class="nav" id="nav" aria-label="Điều hướng chính">
+      <a href="#/" data-route="dashboard">Tổng quan</a>
+      <a href="#/schedule" data-route="schedule">Lịch thi đấu</a>
+      <a href="#/standings" data-route="standings">Bảng xếp hạng</a>
+      <a href="#/teams" data-route="teams">Đội bóng</a>
+      <a href="#/predictions" data-route="predictions">Lịch sử dự đoán</a>
+      <a href="#/settings" data-route="settings">Cài đặt</a>
+    </nav>
+    <div class="tools">
+      <label class="tz" title="Múi giờ hiển thị">
+        <span class="sr">Múi giờ</span>
+        <select id="tz-select"></select>
+      </label>
+      <button class="btn btn-accent" id="sync-btn" type="button">Cập nhật dữ liệu</button>
+    </div>
+  </header>
+
+  <div id="banners"></div>
+  <main id="app" tabindex="-1"><p class="muted pad">Đang tải…</p></main>
+  <div id="toasts" role="status" aria-live="polite"></div>
+
+  <noscript><p class="pad">Trang này cần bật JavaScript để hoạt động.</p></noscript>
+  <script src="/app.js"></script>
+</body>
+</html>

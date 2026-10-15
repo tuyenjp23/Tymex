@@ -1,0 +1,37 @@
+name: Đồng bộ dữ liệu
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"      # mỗi 3 giờ (giờ UTC)
+  workflow_dispatch:             # nút "Run workflow" để chạy ngay
+    inputs:
+      force:
+        description: "Bỏ qua bộ nhớ đệm 15 phút"
+        type: boolean
+        default: false
+
+concurrency:
+  group: tymex-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Đồng bộ và đẩy lên Supabase
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          LEAGUES: ${{ vars.LEAGUES }}
+        run: python scripts/cloud_sync.py ${{ inputs.force && '--force' || '' }}
