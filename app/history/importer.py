@@ -21,7 +21,7 @@ def import_matches(repo, *, source: str, spec: dict, matches: list[dict], resolv
     league_id = ensure_league(repo, spec)
     added = dup = odds_n = 0
     for m in matches:
-        home_id, away_id = resolver.resolve(m["home"]), resolver.resolve(m["away"])
+        home_id, away_id = resolver.resolve(m["home"], spec["country"]), resolver.resolve(m["away"], spec["country"])
         if home_id == away_id:
             continue
         t = parse_iso(m["utc_date"])
@@ -29,6 +29,10 @@ def import_matches(repo, *, source: str, spec: dict, matches: list[dict], resolv
         if near:
             match_id, created = near["id"], False
             dup += 1
+            # trận lịch sử còn "chưa đá" mà nguồn đã có kết quả (hoặc đổi giờ) → cập nhật; trận của football-data.org giữ nguyên
+            if near["provider"] != MAIN_PROVIDER and near["status"] != "FINISHED" and (
+                    m["status"] == "FINISHED" or (m["status"] == "SCHEDULED" and near.get("utc_date") != m["utc_date"])):
+                repo.update_history_match(match_id, m)
         else:
             match_id, created = repo.add_history_match(source, league_id, m, home_id, away_id)
             added += int(created)

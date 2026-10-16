@@ -51,6 +51,8 @@ RESERVE_TOKENS = {"b", "ii", "c", "u19", "u21", "u23"}
 AMBIGUOUS_CITIES = {
     "barcelona", "madrid", "paris", "milan", "manchester", "sheffield", "london", "liverpool", "nottingham", "bristol",
     "berlin", "genoa", "turin", "rome", "seville", "glasgow",
+    # nhiều CLB cùng gốc tên trong một nước (Dundee/Dundee United, Independiente/Independiente Rivadavia, Yokohama FC/F. Marinos...)
+    "dundee", "independiente", "yokohama", "tokyo", "cordoba", "santa fe", "nacional", "central", "union", "deportivo",
 }
 
 # Cặp tên giống nhau nhưng là hai CLB khác nhau: cấm ghép (dạng đã chuẩn hóa)
@@ -81,10 +83,12 @@ class TeamResolver:
         self.repo = repo
         self.new_provider = new_provider
         self.teams = repo.all_teams_min()
+        self.countries: dict[int, set[str]] = repo.team_countries()
         self._rebuild()
         self.created: list[str] = []
         self.fuzzy: list[tuple[str, str]] = []
-        self._cache: dict[str, int] = {}
+        self._cache: dict[tuple, int] = {}
+        self._scope: str | None = None
 
     def _rebuild(self) -> None:
         self.keys: dict[int, set[str]] = {}
@@ -98,13 +102,18 @@ class TeamResolver:
         self.reserve_ids = {t["id"] for t in self.teams if is_reserve(norm(t["name"]))}
 
     def _allowed(self, form: str, tid: int) -> bool:
-        """Đội dự bị chỉ ghép với đội dự bị, đội chính chỉ ghép với đội chính; và không nằm trong danh sách cấm."""
+        """Đội dự bị chỉ ghép với đội dự bị, đội chính chỉ ghép với đội chính; cùng quốc gia; và không nằm trong danh sách cấm."""
         if is_reserve(form) != (tid in self.reserve_ids):
+            return False
+        if self._scope and self.countries.get(tid) and self._scope not in self.countries[tid]:
             return False
         return not any(frozenset({form, k}) in DENY_PAIRS for k in self.keys[tid])
 
     def _exact(self, form: str) -> list[int]:
-        return [tid for tid, ks in self.keys.items() if form in ks]
+        return [tid for tid, ks in self.keys.items() if form in ks and self._in_scope(tid)]
+
+    def _in_scope(self, tid: int) -> bool:
+        return not (self._scope and self.countries.get(tid) and self._scope not in self.countries[tid])
 
     def _subset(self, form: str) -> list[int]:
         """Tên nguồn ngắn hơn và là tập con các từ của tên đội (vd 'newcastle' ⊂ 'newcastle united')."""
@@ -133,8 +142,9 @@ class TeamResolver:
             return []
         return [scored[0][1]] if scored else []
 
-    def lookup(self, raw_name: str) -> int | None:
-        """Tìm đội đã có trong CSDL; KHÔNG tạo đội mới. None nếu không chắc chắn."""
+    def lookup(self, raw_name: str, country: str | None = None) -> int | None:
+        """Tìm đội đã có trong CSDL; KHÔNG tạo đội mới. None nếu không chắc chắn. Có `country` thì chỉ xét đội của nước đó."""
+        self._scope = country
         base = norm(raw_name)
         forms = [base] + ([ALIASES[base]] if base in ALIASES else [])
         for f in forms:                                  # 1) chính xác (kể cả bí danh)
@@ -155,19 +165,26 @@ class TeamResolver:
     def resolve_existing(self, raw_name: str) -> int | None:
         return self.lookup((raw_name or "").strip())
 
-    def resolve(self, raw_name: str) -> int:
+    def resolve(self, raw_name: str, country: str | None = None) -> int:
         raw_name = (raw_name or "").strip()
-        if raw_name in self._cache:
-            return self._cache[raw_name]
-        tid = self.lookup(raw_name)
+        ck = (country, raw_name)
+        if ck in self._cache:
+            return self._cache[ck]
+        tid = self.lookup(raw_name, country)
         if tid is None:                                  # 4) không chắc → tạo đội mới, báo lại
             base = norm(raw_name)
             canon = ALIASES.get(base)                    # tên viết tắt có bí danh ('Sheffield Weds') → nhớ luôn dạng đầy đủ để tên dài sau này khớp
-            tid = self.repo.upsert_team(self.new_provider, TeamDTO(external_id=f"hist:{base or raw_name.lower()}", name=raw_name,
-                                                                   short_name=canon))
-            self.teams.append({"id": tid, "provider": self.new_provider, "external_id": f"hist:{base}", "name": raw_name,
+            ext = f"hist:{base or raw_name.lower()}"
+            if country and any(t["external_id"] == ext for t in self.teams):   # cùng tên nhưng khác nước (Santa Fe, Independiente...)
+                ext = f"hist:{search_key(country).replace(' ', '-')}:{base}"
+            tid = self.repo.upsert_team(self.new_provider, TeamDTO(external_id=ext, name=raw_name, short_name=canon))
+            self.teams.append({"id": tid, "provider": self.new_provider, "external_id": ext, "name": raw_name,
                                "short_name": canon, "tla": None})
+            if country:
+                self.countries[tid] = {country}
             self._rebuild()
             self.created.append(raw_name)
-        self._cache[raw_name] = tid
+        self._cache[ck] = tid
+        if country:
+            self.countries.setdefault(tid, set()).add(country)
         return tid

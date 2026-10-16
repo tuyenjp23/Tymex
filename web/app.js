@@ -240,8 +240,8 @@ function predictionBlock(a) {
       <div class="h" style="width:${pc.home}%">${pct(pc.home)}%</div><div class="d" style="width:${pc.draw}%">${pct(pc.draw)}%</div><div class="a" style="width:${pc.away}%">${pct(pc.away)}%</div></div>
     <div class="plabels"><span>${esc(m.home_name)} thắng</span><span>Hòa</span><span>${esc(m.away_name)} thắng</span></div>
     <div class="facts">
-      <div class="fact-box"><div class="v">${pick.home} - ${pick.away}</div><div class="l">tỷ số có xác suất cao nhất (${pct(pick.prob * 100)}%)</div></div>
-      <div class="fact-box"><div class="v">${num(p.lambda_home)} - ${num(p.lambda_away)}</div><div class="l">bàn thắng kỳ vọng (nhà - khách)</div></div>
+      <div class="fact-box"><div class="v">${num(p.lambda_home)} - ${num(p.lambda_away)}</div><div class="l">bàn thắng kỳ vọng (nhà - khách): con số phân biệt các trận rõ nhất</div></div>
+      <div class="fact-box"><div class="v">${pick.home} - ${pick.away}</div><div class="l">tỷ số đơn lẻ hay gặp nhất, chỉ ${pct(pick.prob * 100)}% khả năng đúng</div></div>
       <div class="fact-box"><div class="v">${pct(p.over_2_5 * 100, 0)}%</div><div class="l">trên 2,5 bàn</div></div>
       <div class="fact-box"><div class="v">${pct(p.both_teams_score * 100, 0)}%</div><div class="l">cả hai đội cùng ghi bàn</div></div></div>
     <h3>Ma trận tỷ số</h3>${matrix}
@@ -307,10 +307,16 @@ function h2hBlock(a) {
     <div class="t-scroll"><table class="t"><thead><tr><th>Ngày</th><th>Trận đấu</th><th class="r">Tỷ số</th><th>Kết quả</th></tr></thead><tbody>${h.games.map((g) =>
       `<tr><td>${esc(fmtDate(g.utc_date))}</td><td>${esc(g.home_name)} - ${esc(g.away_name)}</td><td class="r num">${g.home_score}-${g.away_score}</td><td>${g.winner === "A" ? esc(m.home_name) : g.winner === "B" ? esc(m.away_name) : "Hòa"}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
+function scoreLine(sc, m) {
+  if (!sc) return "";
+  const top = sc.top.map((t, k) => `<span class="sc${k === 0 ? " first" : ""}"><b class="num">${t.home}-${t.away}</b> ${pct(t.prob * 100, 0)}%</span>`).join("");
+  return `<div class="line score"><span class="k">Tỷ số gợi ý</span><span class="v"><span class="xg">Bàn kỳ vọng <b class="num">${num(sc.lambda_home)} - ${num(sc.lambda_away)}</b></span> ${top}
+    <span class="small muted">(theo góc nhìn này: ${esc(sc.basis)}; % là khả năng đúng chính xác tỷ số đó)</span></span></div>`;
+}
 function conclusionBlock(a) {
   const c = a.conclusions;
   return `<section class="block"><h2>Kết luận phân tích</h2><p class="block-sub">Mỗi mục tách rõ dữ kiện (số liệu) và suy luận (diễn giải từ số liệu).</p>
-    ${c.items.map((i) => `<div class="concl"><h3>${esc(i.topic)}</h3><div class="line fact"><span class="k">Dữ kiện</span><span class="v">${esc(i.fact)}</span></div><div class="line infer"><span class="k">Suy luận</span><span class="v">${esc(i.inference)}</span></div></div>`).join("")}
+    ${c.items.map((i) => `<div class="concl"><h3>${esc(i.topic)}</h3><div class="line fact"><span class="k">Dữ kiện</span><span class="v">${esc(i.fact)}</span></div><div class="line infer"><span class="k">Suy luận</span><span class="v">${esc(i.inference)}</span></div>${scoreLine(i.score, a.match)}</div>`).join("")}
     <div class="concl"><h3>Dữ liệu còn thiếu khiến nhận định kém chắc chắn</h3><ul class="gaps">${c.data_gaps.map((g) => `<li>${esc(g)}</li>`).join("")}</ul></div></section>`;
 }
 async function pageMatch(parts) {

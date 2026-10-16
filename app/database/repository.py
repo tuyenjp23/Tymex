@@ -208,11 +208,22 @@ class Repository:
         with self.db.connect() as c:
             return _dicts(c.execute("SELECT id, provider, external_id, name, short_name, tla FROM teams"))
 
+    def team_countries(self) -> dict[int, set[str]]:
+        """Mỗi đội đã đá ở giải của những nước nào (để không ghép nhầm đội trùng tên khác nước)."""
+        out: dict[int, set[str]] = {}
+        with self.db.connect() as c:
+            for r in c.execute("""SELECT DISTINCT tid, country FROM (
+                    SELECT m.home_team_id AS tid, l.country AS country FROM matches m JOIN leagues l ON l.id=m.league_id
+                    UNION SELECT m.away_team_id, l.country FROM matches m JOIN leagues l ON l.id=m.league_id)
+                    WHERE country IS NOT NULL AND country != ''"""):
+                out.setdefault(r["tid"], set()).add(r["country"])
+        return out
+
     def find_match_near(self, league_id: int, home_id: int, away_id: int, date_from: str, date_to: str) -> dict | None:
         """Trận cùng giải, cùng cặp đội (đúng chiều nhà/khách) trong khoảng ngày [date_from, date_to]."""
         with self.db.connect() as c:
             r = c.execute(
-                """SELECT id, status, provider FROM matches WHERE league_id=? AND home_team_id=? AND away_team_id=?
+                """SELECT id, status, provider, utc_date FROM matches WHERE league_id=? AND home_team_id=? AND away_team_id=?
                    AND utc_date >= ? AND utc_date <= ? LIMIT 1""", (league_id, home_id, away_id, date_from, date_to)).fetchone()
             return dict(r) if r else None
 
@@ -231,6 +242,14 @@ class Repository:
                 return cur.lastrowid, True
             r = c.execute("SELECT id FROM matches WHERE provider=? AND external_id=?", (provider, m["external_id"])).fetchone()
             return r["id"], False
+
+    def update_history_match(self, match_id: int, m: dict) -> None:
+        """Cập nhật trận do nguồn lịch sử tạo: có kết quả hoặc đổi giờ đá. Không đụng trận của football-data.org."""
+        with self.db.connect() as c:
+            c.execute("""UPDATE matches SET status=?, utc_date=?, home_score=?, away_score=?, home_ht=?, away_ht=?, winner=?,
+                           matchday=COALESCE(?, matchday), updated_at=? WHERE id=?""",
+                      (m["status"], m["utc_date"], m.get("home_score"), m.get("away_score"), m.get("home_ht"), m.get("away_ht"),
+                       m.get("winner"), m.get("matchday"), _now(), match_id))
 
     def save_odds(self, match_id: int, source: str, home: float, draw: float, away: float) -> None:
         with self.db.connect() as c:

@@ -220,3 +220,9 @@ code, .code { font-family: Consolas, "Cascadia Mono", monospace; background: var
 
 .mk-row { margin-bottom: .6rem; } .mk-label { font-size: .85rem; color: var(--muted); margin-bottom: .1rem; }
 .mk-row .pstrip { height: 34px; margin: .15rem 0; }
+
+.concl .line.score .k { color: var(--accent, #2563eb); }
+.concl .line.score .xg { margin-right: .6rem; }
+.concl .line.score .sc { display: inline-block; margin-right: .6rem; padding: .05rem .45rem; border: 1px solid var(--line); border-radius: 6px; }
+.concl .line.score .sc.first { border-color: currentColor; }
+.concl .line.score .k { background: var(--panel-2); border-left: 3px solid var(--draw, #888); }

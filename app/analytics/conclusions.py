@@ -1,6 +1,8 @@
 """Kết luận phân tích bằng quy tắc. Mỗi mục tách rõ DỮ KIỆN (số liệu) và SUY LUẬN (diễn giải từ số liệu)."""
 from __future__ import annotations
 
+from .score_view import _avg, score_view
+
 
 def _better(a: float | None, b: float | None, threshold: float, higher_is_better: bool = True) -> str | None:
     """'a' / 'b' / 'even' / None (thiếu dữ liệu)."""
@@ -30,7 +32,9 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
                "even": "Phong độ hai đội tương đương (chênh lệch dưới 0,4 điểm/trận)."}[c]
         if hs["played"] < n_form or as_["played"] < n_form:
             inf += f" Lưu ý: không đủ {n_form} trận cho cả hai đội nên độ tin cậy thấp hơn."
-        items.append({"topic": "Phong độ gần đây", "fact": fact, "inference": inf})
+        items.append({"topic": "Phong độ gần đây", "fact": fact, "inference": inf, "score": score_view(
+            _avg(hs["avg_goals_for"], as_["avg_goals_against"]), _avg(as_["avg_goals_for"], hs["avg_goals_against"]),
+            "bàn ghi/thủng trung bình trong các trận gần nhất của hai đội")})
     else:
         gaps.append("Thiếu dữ liệu phong độ gần đây của ít nhất một đội.")
 
@@ -41,7 +45,8 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
         c = _better(hs["avg_goals_for"], as_["avg_goals_for"], 0.3)
         inf = {"a": f"{home} ghi bàn đều và nhiều hơn.", "b": f"{away} ghi bàn đều và nhiều hơn.",
                "even": "Khả năng ghi bàn của hai đội tương đương."}[c]
-        items.append({"topic": "Khả năng ghi bàn", "fact": fact, "inference": inf})
+        items.append({"topic": "Khả năng ghi bàn", "fact": fact, "inference": inf, "score": score_view(
+            hs["avg_goals_for"], as_["avg_goals_for"], "chỉ tính số bàn mỗi đội ghi được trung bình")})
 
         # --- phòng ngự
         fact = (f"Bàn thua/trận: {home} {hs['avg_goals_against']}, {away} {as_['avg_goals_against']}; "
@@ -49,7 +54,8 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
         c = _better(hs["avg_goals_against"], as_["avg_goals_against"], 0.3, higher_is_better=False)
         inf = {"a": f"{home} phòng ngự chắc chắn hơn.", "b": f"{away} phòng ngự chắc chắn hơn.",
                "even": "Hai đội có hiệu quả phòng ngự tương đương."}[c]
-        items.append({"topic": "Phòng ngự", "fact": fact, "inference": inf})
+        items.append({"topic": "Phòng ngự", "fact": fact, "inference": inf, "score": score_view(
+            as_["avg_goals_against"], hs["avg_goals_against"], "mỗi đội ghi bao nhiêu bàn thì bằng số bàn đối thủ thường để thủng lưới")})
 
     # --- sân nhà / sân khách
     hv, av = home_venue["summary"], away_venue["summary"]
@@ -62,7 +68,9 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
         inf = {"a": f"Yếu tố sân bãi nghiêng về {home}: họ chơi tốt tại sân nhà hơn mức {away} thể hiện khi đá sân khách.",
                "b": f"{away} có thành tích sân khách tốt hơn thành tích sân nhà của {home}, lợi thế sân nhà không rõ.",
                "even": "Thành tích sân nhà của chủ nhà và sân khách của đội khách ở mức tương đương."}[c]
-        items.append({"topic": "Sân nhà / sân khách", "fact": fact, "inference": inf})
+        items.append({"topic": "Sân nhà / sân khách", "fact": fact, "inference": inf, "score": score_view(
+            _avg(hv["avg_goals_for"], av["avg_goals_against"]), _avg(av["avg_goals_for"], hv["avg_goals_against"]),
+            "thành tích của chủ nhà trên sân nhà và của đội khách trên sân khách")})
     else:
         gaps.append("Số trận sân nhà/sân khách quá ít (dưới 3) để rút ra nhận định về yếu tố sân bãi.")
 
@@ -74,7 +82,8 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
         inf = ("Lịch sử đối đầu chỉ mang tính tham khảo vì đội hình và phong độ đã thay đổi theo thời gian; "
                + ("nghiêng về " + home if hh["a_wins"] - hh["b_wins"] >= 2 else
                   "nghiêng về " + away if hh["b_wins"] - hh["a_wins"] >= 2 else "không nghiêng rõ về đội nào") + ".")
-        items.append({"topic": "Lịch sử đối đầu", "fact": fact, "inference": inf})
+        items.append({"topic": "Lịch sử đối đầu", "fact": fact, "inference": inf, "score": score_view(
+            hh["a_goals"] / hh["played"], hh["b_goals"] / hh["played"], "số bàn trung bình mỗi trận trong các lần đối đầu")})
     else:
         gaps.append(f"Lịch sử đối đầu chỉ có {hh['played']} trận trong dữ liệu đã đồng bộ nên không đủ ý nghĩa thống kê.")
 
@@ -90,7 +99,8 @@ def build_conclusions(home: str, away: str, home_form: dict, away_form: dict, ho
             inf = f"Mô hình thiên về {'chủ nhà' if top == 'home' else 'đội khách' if top == 'away' else 'kết quả hòa'}, nhưng xác suất còn lại vẫn đáng kể."
         if prediction["quality"]["reliability"] == "thấp":
             inf += " Độ tin cậy của ước lượng thấp do mẫu dữ liệu nhỏ."
-        items.append({"topic": "Dự đoán thống kê", "fact": fact, "inference": inf})
+        items.append({"topic": "Dự đoán thống kê", "fact": fact, "inference": inf, "score": score_view(
+            prediction["lambda_home"], prediction["lambda_away"], "mô hình Poisson tổng hợp sức tấn công/phòng ngự theo sân nhà, sân khách")})
     else:
         gaps.append(prediction.get("reason", "Chưa có dự đoán do thiếu dữ liệu."))
 

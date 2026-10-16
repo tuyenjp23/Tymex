@@ -17,6 +17,10 @@ from ..utils import to_iso
 CO_UK_URL = "https://www.football-data.co.uk/mmz4281/{yy}{zz}/{div}.csv"
 OPENFOOTBALL_URL = "https://raw.githubusercontent.com/openfootball/football.json/master/{season}/{code}.json"
 
+CO_UK_NEW_URL = "https://www.football-data.co.uk/new/{code}.csv"
+ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={d1}-{d2}&limit=400"
+ODDS_COLUMNS_NEW = [("AvgH", "AvgD", "AvgA", "Avg"), ("PH", "PD", "PA", "Pinn"), ("B365H", "B365D", "B365A", "B365")]
+
 # (cột chủ, hòa, khách, nhãn nguồn): ưu tiên trung bình thị trường lúc đóng cửa
 ODDS_COLUMNS = [
     ("AvgCH", "AvgCD", "AvgCA", "AvgC"), ("AvgH", "AvgD", "AvgA", "Avg"),
@@ -30,8 +34,9 @@ def co_uk_url(div: str, season: int) -> str:
     return CO_UK_URL.format(yy=f"{season % 100:02d}", zz=f"{(season + 1) % 100:02d}", div=div)
 
 
-def openfootball_url(code: str, season: int) -> str:
-    return OPENFOOTBALL_URL.format(season=f"{season}-{(season + 1) % 100:02d}", code=code)
+def openfootball_url(code: str, season: int, calendar: bool = False) -> str:
+    folder = str(season) if calendar else f"{season}-{(season + 1) % 100:02d}"
+    return OPENFOOTBALL_URL.format(season=folder, code=code)
 
 
 def _winner(h: int, a: int) -> str:
@@ -121,7 +126,7 @@ def parse_openfootball(text: str, *, code: str, season: int, tz: str, today_iso:
         if not (home and away and day and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)):
             continue
         score = m.get("score") or {}
-        ft = score.get("ft") if isinstance(score, dict) else None
+        ft = score.get("ft") if isinstance(score, dict) else (score if isinstance(score, list) else None)
         if not ft and m.get("score1") is not None and m.get("score2") is not None:
             ft = [m.get("score1"), m.get("score2")]
         hg = ag = None
@@ -140,4 +145,89 @@ def parse_openfootball(text: str, *, code: str, season: int, tz: str, today_iso:
             "home_ht": _int(ht[0]) if ht and len(ht) == 2 else None, "away_ht": _int(ht[1]) if ht and len(ht) == 2 else None,
             "winner": _winner(hg, ag) if hg is not None else None, "odds": None, "odds_source": None,
         })
+    return out
+
+
+def co_uk_new_url(code: str) -> str:
+    return CO_UK_NEW_URL.format(code=code)
+
+
+def espn_url(slug: str, d1: str, d2: str) -> str:
+    return ESPN_URL.format(slug=slug, d1=d1, d2=d2)
+
+
+def parse_co_uk_new_csv(text: str, *, code: str, season: int, tz: str) -> list[dict]:
+    """Giải 'mở rộng' của football-data.co.uk (Nhật, Trung Quốc, Brazil, Argentina, Mỹ, Mexico...): một tệp chứa mọi mùa.
+
+    Cột: Country, League, Season, Date, Time, Home, Away, HG, AG, Res, PH/PD/PA, AvgH/AvgD/AvgA ...
+    Mùa ghi '2025' (giải theo năm) hoặc '2024/2025'.
+    """
+    out: list[dict] = []
+    want = {str(season), f"{season}/{season + 1}", f"{season}/{(season + 1) % 100:02d}"}
+    for row in csv.DictReader(io.StringIO(text)):
+        row = {(k or "").strip(): (v or "").strip() for k, v in row.items() if k}
+        if row.get("Season") not in want:
+            continue
+        home, away = row.get("Home"), row.get("Away")
+        hg, ag = _int(row.get("HG")), _int(row.get("AG"))
+        if not (home and away and row.get("Date")) or hg is None or ag is None:
+            continue
+        d = None
+        for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+            try:
+                d = datetime.strptime(row["Date"], fmt).strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                pass
+        if d is None:
+            continue
+        odds, src = None, None
+        for ch, cd, ca, label in ODDS_COLUMNS_NEW:
+            trio = (_float(row.get(ch)), _float(row.get(cd)), _float(row.get(ca)))
+            if all(trio):
+                odds, src = trio, label
+                break
+        out.append({
+            "external_id": f"cn:{code}:{season}:{d.replace('-', '')}:{_slug(home)}:{_slug(away)}",
+            "season": season, "matchday": None, "utc_date": _to_utc(d, row.get("Time"), tz), "status": "FINISHED",
+            "home": home, "away": away, "home_score": hg, "away_score": ag, "home_ht": None, "away_ht": None,
+            "winner": _winner(hg, ag), "odds": odds, "odds_source": src,
+        })
+    return out
+
+
+def parse_espn(text: str, *, slug: str, season: int, today_iso: str) -> list[dict]:
+    """Bảng kết quả/lịch của ESPN (API công khai không chính thức): trận xong → FINISHED, chưa đá → SCHEDULED."""
+    data = json.loads(text)
+    out: list[dict] = []
+    for ev in data.get("events", []) or []:
+        try:
+            comp = (ev.get("competitions") or [None])[0] or {}
+            teams = {c.get("homeAway"): c for c in comp.get("competitors", [])}
+            h, a = teams.get("home"), teams.get("away")
+            if not (h and a):
+                continue
+            hn = (h.get("team") or {}).get("displayName") or (h.get("team") or {}).get("name")
+            an = (a.get("team") or {}).get("displayName") or (a.get("team") or {}).get("name")
+            raw_date = ev.get("date") or comp.get("date")
+            if not (hn and an and raw_date):
+                continue
+            utc = to_iso(datetime.fromisoformat(raw_date.replace("Z", "+00:00")))
+            st = ((comp.get("status") or ev.get("status") or {}).get("type") or {})
+            state, completed = st.get("state"), bool(st.get("completed"))
+            hg, ag = _int(h.get("score")), _int(a.get("score"))
+            if completed and hg is not None and ag is not None and state == "post":
+                status = "FINISHED"
+            elif state == "pre" and utc > today_iso:
+                status, hg, ag = "SCHEDULED", None, None
+            else:
+                continue                      # đang đá, hoãn, hủy: bỏ qua, không bịa trạng thái
+            out.append({
+                "external_id": f"espn:{slug}:{ev.get('id')}",
+                "season": season, "matchday": None, "utc_date": utc, "status": status,
+                "home": str(hn), "away": str(an), "home_score": hg, "away_score": ag, "home_ht": None, "away_ht": None,
+                "winner": _winner(hg, ag) if status == "FINISHED" else None, "odds": None, "odds_source": None,
+            })
+        except (AttributeError, TypeError, ValueError):
+            continue
     return out
