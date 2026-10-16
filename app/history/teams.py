@@ -40,6 +40,16 @@ ALIASES = {
     "inter": "internazionale milano", "milan": "milan", "verona": "hellas verona",
     "paris sg": "paris saint germain", "lyon": "lyonnais", "rennes": "rennais", "brest": "brestois",
     "st etienne": "saint etienne", "marseille": "marseille",
+    # --- các cặp cùng một CLB bị tách đôi trong log (tên viết khác nhau giữa nguồn co.uk và openfootball/ESPN)
+    "sp lisbon": "sporting cp", "sporting clube portugal": "sporting cp",
+    "sp braga": "sporting clube braga", "sporting braga": "sporting clube braga",
+    "psv": "psv eindhoven", "az": "az alkmaar",
+    "argentinos jrs": "argentinos juniors", "urawa reds": "urawa red diamonds",
+    "peterboro": "peterborough united", "gornik z": "gornik zabrze", "heart midlothian": "hearts",
+    "kasimpasa sk": "kasimpasa", "willem ii tilburg": "willem ii", "gimnasia la plata": "gimnasia l p",
+    "atl tucuman": "atletico tucuman", "atl san luis": "atletico san luis", "ind rivadavia": "independiente rivadavia",
+    "atletico goianiense": "atletico go", "athletico pr": "paranaense", "athletico paranaense": "paranaense",
+    "remo pa": "clube remo", "remo": "clube remo", "atletico mg": "mineiro",
 }
 
 
@@ -56,7 +66,12 @@ AMBIGUOUS_CITIES = {
 }
 
 # Cặp tên giống nhau nhưng là hai CLB khác nhau: cấm ghép (dạng đã chuẩn hóa)
-DENY_PAIRS = {frozenset({"reggiana", "reggina"})}
+DENY_PAIRS = {
+    frozenset({"reggiana", "reggina"}),
+    frozenset({"gremio", "gremio novorizontino"}),     # hai CLB khác nhau (Grêmio Novorizontino SP)
+    frozenset({"gremio", "gremio novorizontino sp"}),
+    frozenset({"atletico mg", "atletico go"}),          # Atlético Mineiro ≠ Atlético Goianiense
+}
 
 
 def norm(name: str | None) -> str:

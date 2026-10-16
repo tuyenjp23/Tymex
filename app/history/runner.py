@@ -19,7 +19,7 @@ SRC_CO_NEW, SRC_ESPN = "football-data.co.uk/new", "espn"
 ALL_SOURCES = (SRC_CO_UK, SRC_OF, SRC_CO_NEW, SRC_ESPN)
 ESPN_SEASONS = 3          # ESPN gọi theo từng tháng nên chỉ lấy 3 mùa gần nhất để nhẹ
 # Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
-RESOLVER_VERSION = 4   # (thêm giải/nguồn mới không cần tăng số này)
+RESOLVER_VERSION = 5   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
 
 
 def default_fetch(url: str) -> bytes | None:
@@ -52,9 +52,13 @@ def _espn_rows(spec: dict, season: int, cur: int, today: date, now_iso: str, fet
     rows: list[dict] = []
     seen: set[str] = set()
     d = start
+    errs: list[str] = []
     while d <= end:
         nxt = min((d.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), end)
-        raw = fetch(espn_url(spec["espn"], d.strftime("%Y%m%d"), nxt.strftime("%Y%m%d")))
+        try:
+            raw = fetch(espn_url(spec["espn"], d.strftime("%Y%m%d"), nxt.strftime("%Y%m%d")))
+        except Exception as exc:   # noqa: BLE001  một tháng lỗi không làm mất cả mùa
+            errs.append(str(exc)); raw = None
         if raw:
             for r in parse_espn(decode_bytes(raw), slug=spec["espn"], season=season, today_iso=now_iso):
                 if r["external_id"] not in seen:
@@ -62,6 +66,8 @@ def _espn_rows(spec: dict, season: int, cur: int, today: date, now_iso: str, fet
         d = nxt + timedelta(days=1)
         if fetch is default_fetch:
             time.sleep(0.1)
+    if not rows and errs:
+        raise RuntimeError(errs[0])
     if season == cur and rows:
         repo.mark_history_import(SRC_ESPN, spec["code"] + "#espn-backfill", season, len(rows), 0)
     return rows

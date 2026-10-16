@@ -67,3 +67,29 @@ def test_all_specs_have_a_source():
     for x in HIST_LEAGUES:
         assert x.get("co_uk") or x.get("openfootball") or x.get("co_uk_new") or x.get("espn"), x["code"]
     assert len({x["code"] for x in HIST_LEAGUES}) == len(HIST_LEAGUES)
+
+
+def test_known_wrong_merges_blocked_and_duplicates_joined(repo):
+    from app.history.teams import TeamResolver
+    r = TeamResolver(repo)
+    gremio = r.resolve("Gremio", "Brazil")
+    assert r.resolve("Grêmio Novorizontino SP", "Brazil") != gremio
+    mg, go = r.resolve("Atletico-MG", "Brazil"), r.resolve("Atletico GO", "Brazil")
+    assert mg != go
+    assert r.resolve("Athletico Paranaense", "Brazil") == r.resolve("CA Paranaense", "Brazil")
+    assert r.resolve("PSV", "Netherlands") == r.resolve("PSV Eindhoven", "Netherlands")
+    assert r.resolve("Sp Lisbon", "Portugal") == r.resolve("Sporting CP", "Portugal")
+    assert r.resolve("Remo PA", "Brazil") == r.resolve("Clube do Remo", "Brazil")
+
+
+def test_espn_one_bad_month_does_not_drop_season(repo):
+    calls = {"n": 0}
+
+    def fetch(url):
+        calls["n"] += 1
+        if "20250101" in url:
+            raise RuntimeError("400 Bad Request")
+        return json.dumps(ESPN).encode() if "kor.1" in url else None
+
+    out = run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None)
+    assert out["added"] >= 1

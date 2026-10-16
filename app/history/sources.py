@@ -18,7 +18,7 @@ CO_UK_URL = "https://www.football-data.co.uk/mmz4281/{yy}{zz}/{div}.csv"
 OPENFOOTBALL_URL = "https://raw.githubusercontent.com/openfootball/football.json/master/{season}/{code}.json"
 
 CO_UK_NEW_URL = "https://www.football-data.co.uk/new/{code}.csv"
-ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={d1}-{d2}&limit=400"
+ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={d1}-{d2}"
 ODDS_COLUMNS_NEW = [("AvgH", "AvgD", "AvgA", "Avg"), ("PH", "PD", "PA", "Pinn"), ("B365H", "B365D", "B365A", "B365")]
 
 # (cột chủ, hòa, khách, nhãn nguồn): ưu tiên trung bình thị trường lúc đóng cửa
