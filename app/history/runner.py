@@ -19,7 +19,7 @@ SRC_CO_NEW, SRC_ESPN = "football-data.co.uk/new", "espn"
 ALL_SOURCES = (SRC_CO_UK, SRC_OF, SRC_CO_NEW, SRC_ESPN)
 ESPN_SEASONS = 3          # ESPN gọi theo từng tháng nên chỉ lấy 3 mùa gần nhất để nhẹ
 # Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
-RESOLVER_VERSION = 5   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
+RESOLVER_VERSION = 7   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
 
 
 def default_fetch(url: str) -> bytes | None:
@@ -31,10 +31,15 @@ def default_fetch(url: str) -> bytes | None:
             r = httpx.get(url, timeout=30, follow_redirects=True, headers={"User-Agent": "tymex-history/1.0"})
             if r.status_code == 404:
                 return None
+            if 400 <= r.status_code < 500 and r.status_code != 429:
+                body = r.text[:200].replace("\n", " ")
+                raise RuntimeError(f"{r.status_code} {url} -> {body}")     # lỗi do yêu cầu: thử lại cũng vô ích, nêu rõ lý do
             r.raise_for_status()
             return r.content
         except Exception as exc:   # noqa: BLE001
             last = exc
+            if str(exc)[:1] == "4":
+                break
     raise RuntimeError(f"{url}: {last}")
 
 

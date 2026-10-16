@@ -5,8 +5,11 @@ Thứ tự: khớp chính xác (sau chuẩn hóa) → bí danh viết tay → t�
 """
 from __future__ import annotations
 
+import csv
 import difflib
 import re
+from functools import lru_cache
+from pathlib import Path
 
 from ..data_providers.base import TeamDTO
 from ..utils import search_key
@@ -50,6 +53,9 @@ ALIASES = {
     "atl tucuman": "atletico tucuman", "atl san luis": "atletico san luis", "ind rivadavia": "independiente rivadavia",
     "atletico goianiense": "atletico go", "athletico pr": "paranaense", "athletico paranaense": "paranaense",
     "remo pa": "clube remo", "remo": "clube remo", "atletico mg": "mineiro",
+    "heart of midlothian": "hearts", "buyuksehyr": "istanbul basaksehir", "dep riestra": "deportivo riestra",
+    "ae larissa": "larisa", "ofi heraklion": "ofi crete", "gs kallithea": "athens kallithea", "ae kifisias": "kifisia",
+    "bodrum fk": "bodrumspor", "cr flamengo": "flamengo rj", "shenzhen xinpengcheng": "shenzhen peng city",
 }
 
 
@@ -62,7 +68,7 @@ AMBIGUOUS_CITIES = {
     "barcelona", "madrid", "paris", "milan", "manchester", "sheffield", "london", "liverpool", "nottingham", "bristol",
     "berlin", "genoa", "turin", "rome", "seville", "glasgow",
     # nhiều CLB cùng gốc tên trong một nước (Dundee/Dundee United, Independiente/Independiente Rivadavia, Yokohama FC/F. Marinos...)
-    "dundee", "independiente", "yokohama", "tokyo", "cordoba", "santa fe", "nacional", "central", "union", "deportivo",
+    "dundee", "wisla", "independiente", "yokohama", "tokyo", "cordoba", "santa fe", "nacional", "central", "union", "deportivo",
 }
 
 # Cặp tên giống nhau nhưng là hai CLB khác nhau: cấm ghép (dạng đã chuẩn hóa)
@@ -71,11 +77,23 @@ DENY_PAIRS = {
     frozenset({"gremio", "gremio novorizontino"}),     # hai CLB khác nhau (Grêmio Novorizontino SP)
     frozenset({"gremio", "gremio novorizontino sp"}),
     frozenset({"atletico mg", "atletico go"}),          # Atlético Mineiro ≠ Atlético Goianiense
+    frozenset({"athletic mg", "atletico mg"}),          # Athletic Club (MG) ≠ Atlético Mineiro
+    frozenset({"cercle brugge", "brugge"}), frozenset({"cercle brugge", "brugge kv"}),       # Cercle Brugge ≠ Club Brugge
+    frozenset({"guangzhou city", "guangzhou"}),         # Guangzhou City ≠ Guangzhou FC (Evergrande)
+    frozenset({"wuhan", "wuhan three towns"}),          # Wuhan FC (Zall) ≠ Wuhan Three Towns
+    frozenset({"los angeles galaxy", "los angeles"}),   # LA Galaxy ≠ LAFC
+    frozenset({"lausanne", "lausanne ouchy"}),          # Lausanne-Sport ≠ Lausanne Ouchy
+    frozenset({"shenzhen peng city", "shenzhen"}), frozenset({"shenzhen xinpengcheng", "shenzhen"}),
 }
 
 
+_TRANSLIT = str.maketrans({"ı": "i", "İ": "i", "ł": "l", "Ł": "l", "ø": "o", "Ø": "o", "æ": "ae", "Æ": "ae", "ß": "ss",
+                           "ð": "d", "þ": "th"})
+
+
+@lru_cache(maxsize=200_000)
 def norm(name: str | None) -> str:
-    s = search_key(name or "")
+    s = search_key((name or "").translate(_TRANSLIT))
     s = s.replace("&", " and ").replace("'", "").replace("’", "")
     s = re.sub(r"[^a-z0-9]+", " ", s)
     toks = [t for t in s.split() if t not in STOP and not t.isdigit()]
@@ -91,6 +109,73 @@ def is_reserve(key: str) -> bool:
     return len(toks) >= 2 and toks[-1] in RESERVE_TOKENS
 
 
+# Nhóm nước dùng chung một danh sách CLB (Cardiff/Swansea đá ở Anh; Toronto/Vancouver đá ở MLS)
+COUNTRY_GROUP = {"Wales": "England", "Canada": "USA"}
+CLUB_CSV = Path(__file__).with_name("club_names.csv")
+
+
+class ClubDirectory:
+    """Bảng CLB chuẩn (openfootball/clubs, xem scripts/build_club_names.py): tên chính + các tên gọi khác theo từng nước.
+
+    `club_id(tên, nước)` trả về mã CLB chắc chắn (hai tên cùng CLB cho cùng mã, hai CLB khác nhau cho mã khác nhau)
+    hoặc None nếu tên chưa có trong bảng. Tên gọi trùng cho nhiều CLB trong cùng nước bị bỏ qua (không đoán).
+    """
+
+    def __init__(self, rows: list[tuple[str, str, str]]):
+        cand: dict[str, dict[str, set[str]]] = {}
+        own: dict[str, dict[str, set[str]]] = {}
+        self.display: dict[str, dict[str, str]] = {}
+        for country, canonical, alias in rows:
+            g = COUNTRY_GROUP.get(country, country)
+            cn, an = norm(canonical), norm(alias)
+            if not cn or len(an) < 2:
+                continue
+            cand.setdefault(g, {}).setdefault(an, set()).add(cn)
+            self.display.setdefault(g, {}).setdefault(cn, canonical)
+            if an == cn:
+                own.setdefault(g, {}).setdefault(an, set()).add(cn)
+        self.alias: dict[str, dict[str, str]] = {}
+        for g, table in cand.items():
+            out = {}
+            for an, clubs in table.items():
+                if len(clubs) == 1:
+                    out[an] = next(iter(clubs))
+                elif len(own.get(g, {}).get(an, ())) == 1:          # trùng với tên chính của đúng một CLB → ưu tiên CLB đó
+                    out[an] = next(iter(own[g][an]))
+            self.alias[g] = out
+
+    @classmethod
+    def load(cls, path: Path = CLUB_CSV) -> "ClubDirectory":
+        rows: list[tuple[str, str, str]] = []
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as f:
+                rows = [(r["country"], r["canonical"], r["alias"]) for r in csv.DictReader(f)]
+        except OSError:
+            pass
+        return cls(rows)
+
+    def club_id(self, name: str | None, country: str | None) -> str | None:
+        if not name or not country:
+            return None
+        g = COUNTRY_GROUP.get(country, country)
+        cn = self.alias.get(g, {}).get(norm(name))
+        return f"{g}|{cn}" if cn else None
+
+    def canonical_name(self, club_id: str) -> str:
+        g, cn = club_id.split("|", 1)
+        return self.display.get(g, {}).get(cn, cn)
+
+
+_DIRECTORY: ClubDirectory | None = None
+
+
+def get_directory() -> ClubDirectory:
+    global _DIRECTORY
+    if _DIRECTORY is None:
+        _DIRECTORY = ClubDirectory.load()
+    return _DIRECTORY
+
+
 class TeamResolver:
     """Nhận tên đội từ nguồn lịch sử, trả về id đội trong CSDL (tạo mới nếu không ghép được)."""
 
@@ -99,6 +184,8 @@ class TeamResolver:
         self.new_provider = new_provider
         self.teams = repo.all_teams_min()
         self.countries: dict[int, set[str]] = repo.team_countries()
+        self.dir = get_directory()
+        self._unknown_only = False
         self._rebuild()
         self.created: list[str] = []
         self.fuzzy: list[tuple[str, str]] = []
@@ -115,6 +202,22 @@ class TeamResolver:
                                        if k and len(k) >= 3 and not _tokens(k) <= GENERIC_TOKENS}
         self.names = {t["id"]: t["name"] for t in self.teams}
         self.reserve_ids = {t["id"] for t in self.teams if is_reserve(norm(t["name"]))}
+        self._club_index: dict[str, set[int]] = {}
+        self._team_cids: dict[int, set[str]] = {}
+        for t in self.teams:
+            self._index_team(t["id"], t)
+
+    def _index_team(self, tid: int, team: dict | None = None) -> None:
+        """Ghi nhận mã CLB chuẩn của đội (theo các nước đội đã đá) để tra nhanh."""
+        team = team or next((t for t in self.teams if t["id"] == tid), None)
+        if not team:
+            return
+        for country in self.countries.get(tid, ()):
+            for nm in (team["name"], team.get("short_name")):
+                cid = self.dir.club_id(nm, country)
+                if cid:
+                    self._club_index.setdefault(cid, set()).add(tid)
+                    self._team_cids.setdefault(tid, set()).add(cid)
 
     def _allowed(self, form: str, tid: int) -> bool:
         """Đội dự bị chỉ ghép với đội dự bị, đội chính chỉ ghép với đội chính; cùng quốc gia; và không nằm trong danh sách cấm."""
@@ -122,10 +225,13 @@ class TeamResolver:
             return False
         if self._scope and self.countries.get(tid) and self._scope not in self.countries[tid]:
             return False
+        if self._unknown_only and self._team_cids.get(tid):
+            return False
         return not any(frozenset({form, k}) in DENY_PAIRS for k in self.keys[tid])
 
     def _exact(self, form: str) -> list[int]:
-        return [tid for tid, ks in self.keys.items() if form in ks and self._in_scope(tid)]
+        return [tid for tid, ks in self.keys.items() if form in ks and self._in_scope(tid)
+                and not (self._unknown_only and self._team_cids.get(tid))]
 
     def _in_scope(self, tid: int) -> bool:
         return not (self._scope and self.countries.get(tid) and self._scope not in self.countries[tid])
@@ -160,6 +266,19 @@ class TeamResolver:
     def lookup(self, raw_name: str, country: str | None = None) -> int | None:
         """Tìm đội đã có trong CSDL; KHÔNG tạo đội mới. None nếu không chắc chắn. Có `country` thì chỉ xét đội của nước đó."""
         self._scope = country
+        cid = self.dir.club_id(raw_name, country)
+        if cid:                                          # 0) tên có trong bảng CLB chuẩn: ghép chắc chắn, không đoán
+            hit = self._club_index.get(cid)
+            if hit:
+                return min(hit)
+            self._unknown_only = True                    # CLB chuẩn chưa có trong CSDL: chỉ thử khớp với đội chưa có trong bảng
+            try:
+                return self._lookup_old(raw_name)
+            finally:
+                self._unknown_only = False
+        return self._lookup_old(raw_name)
+
+    def _lookup_old(self, raw_name: str) -> int | None:
         base = norm(raw_name)
         forms = [base] + ([ALIASES[base]] if base in ALIASES else [])
         for f in forms:                                  # 1) chính xác (kể cả bí danh)
@@ -188,7 +307,11 @@ class TeamResolver:
         tid = self.lookup(raw_name, country)
         if tid is None:                                  # 4) không chắc → tạo đội mới, báo lại
             base = norm(raw_name)
-            canon = ALIASES.get(base)                    # tên viết tắt có bí danh ('Sheffield Weds') → nhớ luôn dạng đầy đủ để tên dài sau này khớp
+            cid = self.dir.club_id(raw_name, country)
+            canon = self.dir.canonical_name(cid) if cid else ALIASES.get(base)   # tên chuẩn của CLB (bảng chuẩn) hoặc bí danh viết tay
+            if canon and norm(canon) == norm(raw_name):
+                canon = None
+            # (cũ) tên viết tắt có bí danh ('Sheffield Weds') → nhớ luôn dạng đầy đủ để tên dài sau này khớp
             ext = f"hist:{base or raw_name.lower()}"
             if country and any(t["external_id"] == ext for t in self.teams):   # cùng tên nhưng khác nước (Santa Fe, Independiente...)
                 ext = f"hist:{search_key(country).replace(' ', '-')}:{base}"
@@ -202,4 +325,5 @@ class TeamResolver:
         self._cache[ck] = tid
         if country:
             self.countries.setdefault(tid, set()).add(country)
+            self._index_team(tid)
         return tid

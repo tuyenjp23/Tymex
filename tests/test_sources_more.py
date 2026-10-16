@@ -93,3 +93,47 @@ def test_espn_one_bad_month_does_not_drop_season(repo):
 
     out = run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None)
     assert out["added"] >= 1
+
+
+def test_more_wrong_merges_blocked_and_aliases(repo):
+    from app.history.teams import TeamResolver, norm
+    assert norm("Kasımpaşa SK") == "kasimpasa sk" and norm("Wisła Kraków") == "wisla krakow"
+    r = TeamResolver(repo)
+    assert r.resolve("Cercle Brugge", "Belgium") != r.resolve("Club Brugge KV", "Belgium")
+    assert r.resolve("Los Angeles Galaxy", "USA") != r.resolve("Los Angeles FC", "USA")
+    assert r.resolve("Wuhan FC", "China") != r.resolve("Wuhan Three Towns", "China")
+    assert r.resolve("Guangzhou City", "China") != r.resolve("Guangzhou FC", "China")
+    assert r.resolve("Lausanne", "Switzerland") != r.resolve("Lausanne Ouchy", "Switzerland")
+    assert r.resolve("Athletic MG", "Brazil") != r.resolve("Atletico-MG", "Brazil")
+    assert r.resolve("Wisla", "Poland") != r.resolve("Wisla Plock", "Poland")
+    assert r.resolve("Heart of Midlothian", "Scotland") == r.resolve("Hearts", "Scotland")
+    assert r.resolve("Buyuksehyr", "Turkey") == r.resolve("İstanbul Başakşehir", "Turkey")
+    assert r.resolve("CR Flamengo", "Brazil") == r.resolve("Flamengo RJ", "Brazil")
+    assert r.resolve("AE Lárissa", "Greece") == r.resolve("Larisa", "Greece")
+    assert r.resolve("Kasımpaşa SK", "Turkey") == r.resolve("Kasimpasa", "Turkey")
+
+
+def test_club_directory_is_authoritative(repo):
+    from app.history.teams import ClubDirectory, TeamResolver, get_directory
+    d = get_directory()
+    assert len(d.alias["England"]) > 300                         # bảng chuẩn đã được nạp
+    assert d.club_id("Sp Lisbon", "Portugal") == d.club_id("Sporting CP", "Portugal") is not None
+    assert d.club_id("Cercle Brugge", "Belgium") != d.club_id("Club Brugge KV", "Belgium")
+    assert d.club_id("Cardiff City", "Wales") == d.club_id("Cardiff City", "England")   # Wales dùng chung nhóm với England
+    r = TeamResolver(repo)
+    a = r.resolve("Sp Lisbon", "Portugal")
+    assert r.resolve("Sporting Clube de Portugal", "Portugal") == a == r.resolve("Sporting CP", "Portugal")
+    assert r.resolve("Cercle Brugge", "Belgium") != r.resolve("Club Brugge", "Belgium")
+    # tên trùng cho nhiều CLB trong một nước thì bị bỏ khỏi bảng (không đoán)
+    small = ClubDirectory([("X", "Alpha FC", "Al"), ("X", "Beta FC", "Al"), ("X", "Beta FC", "Beta FC"), ("X", "Alpha FC", "Alpha FC")])
+    assert small.club_id("Al", "X") is None and small.club_id("Alpha", "X") is not None
+
+
+def test_directory_team_found_when_db_has_other_spelling(repo):
+    from app.data_providers.base import TeamDTO
+    from app.history.teams import TeamResolver
+    tid = repo.upsert_team("football-data.org", TeamDTO(external_id="9001", name="Sporting Clube de Portugal"))
+    r = TeamResolver(repo)
+    r.countries[tid] = {"Portugal"}
+    r._rebuild()
+    assert r.resolve("Sp Lisbon", "Portugal") == tid
