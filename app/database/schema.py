@@ -162,4 +162,15 @@ CREATE TABLE IF NOT EXISTS history_imports (
     imported_at TEXT NOT NULL,
     PRIMARY KEY (source, league_code, season)
 );
+
+CREATE TABLE IF NOT EXISTS match_absences (
+    match_id INTEGER NOT NULL REFERENCES matches(id),
+    team_id INTEGER NOT NULL REFERENCES teams(id),
+    player TEXT NOT NULL,
+    kind TEXT NOT NULL,                -- out = chắc chắn vắng | doubtful = còn nghi ngờ
+    reason TEXT,
+    source TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (match_id, team_id, player)
+);
 """

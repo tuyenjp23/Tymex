@@ -9,6 +9,8 @@ Tỷ lệ cược trận sắp đá, chuỗi nguồn dự phòng (đặt khóa n
   THE_ODDS_API_KEY (500 credit/tháng; ODDS_MAX_CALLS=3, ODDS_MIN_REMAINING=40) rồi API_FOOTBALL_KEY (100 request/ngày;
   API_FOOTBALL_MAX_CALLS=12, API_FOOTBALL_MIN_REMAINING=15). Đổi thứ tự bằng ODDS_PROVIDER_ORDER="the-odds-api,api-football".
   ODDS_LEAGUES (mặc định PL,PD,BL1,SA,FL1), ODDS_HOURS_AHEAD (30), ODDS_NEAR_INTERVAL_MIN (120), ODDS_FAR_INTERVAL_MIN (1440). Lỗi phần này cũng KHÔNG làm hỏng lần chạy.
+Vắng mặt/chấn thương (cần API_FOOTBALL_KEY): ABSENCES_ENABLED (1; đặt 0 để tắt), ABSENCES_MAX_CALLS (6 request/lần chạy, 1 request/giải/ngày có trận),
+  ABSENCES_INTERVAL_MIN (360). AVAILABILITY_ADJUST=0 tắt xác suất điều chỉnh tham khảo trên trang trận.
 File SQLite làm việc được lưu trong Supabase Storage (bucket riêng tư) để giữ lịch sử dự đoán giữa các lần chạy.
 """
 from __future__ import annotations
@@ -82,6 +84,13 @@ def main() -> int:
                     client.upload_object(BUCKET, "team_names.csv", buf.getvalue().encode("utf-8-sig"))
                 except Exception as exc:   # noqa: BLE001
                     print("Cảnh báo: không lưu được team_names.csv:", type(exc).__name__)
+            try:   # kiểm tra trận lặp / đội bị tách đôi; bản đầy đủ lưu ở Supabase Storage > tymex-private > history_audit.txt
+                from app.history.audit import audit, format_audit   # noqa: PLC0415
+                lines = format_audit(audit(container.repo), limit=200)
+                print("\n".join(lines[:80]))
+                client.upload_object(BUCKET, "history_audit.txt", "\n".join(lines).encode("utf-8"))
+            except Exception as exc:   # noqa: BLE001
+                print("Cảnh báo: không chạy được kiểm tra trận lặp:", type(exc).__name__, exc)
             from app.prediction.benchmark import compare_with_odds   # noqa: PLC0415
             bench = compare_with_odds(container.repo)
             o = bench["overall"]
@@ -119,6 +128,22 @@ def main() -> int:
                 print("  (không ghép được trận):", name)
         except Exception as exc:   # noqa: BLE001  - tỷ lệ cược chỉ bổ sung, không được làm hỏng đồng bộ chính
             print("Cảnh báo: cập nhật tỷ lệ cược thất bại:", type(exc).__name__)
+    api_fb = next((p for p in providers if p.name == "api-football"), None)
+    if api_fb and (env("ABSENCES_ENABLED") or "1").strip() != "0":
+        try:
+            from app.odds.absences import refresh_absences   # noqa: PLC0415
+            res = refresh_absences(
+                container.repo, api_fb,
+                codes=[c.strip() for c in (env("ODDS_LEAGUES") or "PL,PD,BL1,SA,FL1").split(",") if c.strip()],
+                hours_ahead=float(env("ODDS_HOURS_AHEAD") or 30), interval_min=int(env("ABSENCES_INTERVAL_MIN") or 360),
+                max_calls=int(env("ABSENCES_MAX_CALLS") or 6), min_remaining=int(env("API_FOOTBALL_MIN_REMAINING") or 15))
+            print(f"Vắng mặt: {res['calls']} request, {res['matched']} cầu thủ")
+            for line in (res["skipped"] + res["errors"])[:10]:
+                print("  -", line)
+            for name in sorted(set(res["unmatched"]))[:10]:
+                print("  (không ghép được đội):", name)
+        except Exception as exc:   # noqa: BLE001  - chỉ bổ sung, không được làm hỏng đồng bộ chính
+            print("Cảnh báo: cập nhật vắng mặt thất bại:", type(exc).__name__)
     container.predictions.generate_upcoming()
     container.predictions.resolve_results()
 

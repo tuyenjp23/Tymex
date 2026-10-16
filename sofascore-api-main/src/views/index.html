@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SofaScore Full Data API</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #004666; margin-bottom: 25px; }
+        .tabs { display: flex; justify-content: center; margin-bottom: 25px; border-bottom: 2px solid #eee; }
+        .tab { padding: 12px 25px; cursor: pointer; border: none; background: none; font-size: 16px; font-weight: 600; color: #666; transition: all 0.3s; position: relative; }
+        .tab.active { color: #004666; }
+        .tab.active::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 3px; background: #004666; }
+        .tab:hover { color: #004666; }
+        .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 25px; }
+        input[type="date"] { padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; outline: none; }
+        #fixtures-list { display: grid; gap: 12px; }
+        .fixture { background: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; transition: transform 0.2s; }
+        .fixture:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .team { display: flex; align-items: center; gap: 10px; width: 35%; }
+        .team.home { justify-content: flex-end; }
+        .team img { width: 25px; height: 25px; object-fit: contain; }
+        .score { font-weight: bold; font-size: 18px; color: #004666; min-width: 50px; text-align: center; }
+        .time { color: #888; font-size: 13px; text-align: center; }
+        .no-data { text-align: center; color: #888; padding: 40px; }
+        .loading { text-align: center; padding: 40px; font-style: italic; color: #004666; }
+        .status { font-size: 11px; text-transform: uppercase; font-weight: bold; padding: 3px 8px; border-radius: 4px; background: #eee; margin-top: 5px; }
+        .status.live { background: #e74c3c; color: #fff; }
+        
+        .odds-row { display: flex; gap: 6px; margin-top: 8px; justify-content: center; }
+        .odd-item { background: #eef7fb; border: 1px solid #d1e9f5; padding: 2px 6px; border-radius: 4px; display: flex; align-items: center; gap: 4px; min-width: 35px; }
+        .odd-label { color: #666; font-size: 9px; }
+        .odd-value { font-weight: bold; color: #004666; font-size: 10px; }
+        
+        /* Modal Styles */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); overflow-y: auto; }
+        .modal-content { background-color: #fff; margin: 2% auto; padding: 25px; border-radius: 12px; max-width: 900px; position: relative; }
+        .close { position: absolute; right: 20px; top: 15px; font-size: 28px; font-weight: bold; cursor: pointer; color: #888; }
+        .lineups-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 20px; }
+        .lineup-section { margin-bottom: 20px; }
+        .section-title { font-size: 14px; font-weight: bold; color: #004666; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 10px; text-transform: uppercase; }
+        .player-row { padding: 4px 0; border-bottom: 1px dotted #eee; display: flex; justify-content: space-between; align-items: center; }
+        .player-info { display: flex; align-items: center; gap: 8px; }
+        .player-name { font-size: 13px; }
+        .player-pos { font-size: 10px; color: #999; text-transform: uppercase; width: 25px; }
+        .player-number { font-size: 11px; background: #f0f0f0; padding: 1px 5px; border-radius: 3px; color: #666; min-width: 15px; text-align: center; }
+        .missing-reason { font-size: 10px; color: #e74c3c; font-style: italic; }
+        .formation { font-weight: bold; margin-bottom: 15px; color: #004666; text-align: center; font-size: 16px; background: #f9f9f9; padding: 5px; border-radius: 6px; }
+        .lineup-title { text-align: center; color: #004666; margin-bottom: 5px; }
+        .event-info-header { text-align: center; background: #f0f7ff; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #d0e3ff; }
+        .tournament-name { font-size: 14px; color: #555; margin-bottom: 5px; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SofaScore Fixtures & Odds</h1>
+        
+        <div class="tabs">
+            <button class="tab active" data-sport="football">Football</button>
+            <button class="tab" data-sport="basket">Basketball</button>
+            <button class="tab" data-sport="tenis">Tennis</button>
+        </div>
+
+        <div class="controls">
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <label for="date-input">Select Date:</label>
+                <input type="date" id="date-input">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 5px; min-width: 200px;">
+                <label for="league-filter">Filter by League:</label>
+                <select id="league-filter">
+                    <option value="all">All Leagues</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="fixtures-list">
+            <!-- Fixtures will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Details Modal -->
+    <div id="lineups-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="lineups-content">
+                <!-- Content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSport = 'football';
+        let allEvents = [];
+        const fullDataCache = {}; 
+        
+        const dateInput = document.getElementById('date-input');
+        const leagueFilter = document.getElementById('league-filter');
+        const fixturesList = document.getElementById('fixtures-list');
+        const tabs = document.querySelectorAll('.tab');
+        const modal = document.getElementById('lineups-modal');
+        const modalContent = document.getElementById('lineups-content');
+        const closeBtn = document.getElementsByClassName('close')[0];
+
+        const today = new Date().toISOString().split('T')[0];
+        dateInput.value = today;
+
+        async function fetchFixtures() {
+            const date = dateInput.value;
+            if (!date) return;
+            fixturesList.innerHTML = '<div class="loading">Loading fixtures...</div>';
+            try {
+                const response = await fetch(`/api/${currentSport}/fixtures/${date}`);
+                const data = await response.json();
+                if (!data.events || data.events.length === 0) {
+                    allEvents = [];
+                    fixturesList.innerHTML = '<div class="no-data">No fixtures found for this date.</div>';
+                    updateLeagueFilter([]);
+                    return;
+                }
+                allEvents = data.events;
+                updateLeagueFilter(allEvents);
+                renderFixtures(allEvents);
+            } catch (error) {
+                console.error('Error:', error);
+                fixturesList.innerHTML = '<div class="no-data">Error loading fixtures.</div>';
+            }
+        }
+
+        function updateLeagueFilter(events) {
+            const leagues = new Map();
+            events.forEach(e => {
+                if (e.tournament && e.tournament.uniqueTournament) {
+                    leagues.set(e.tournament.uniqueTournament.id, e.tournament.uniqueTournament.name);
+                } else if (e.tournament) {
+                    leagues.set(e.tournament.id, e.tournament.name);
+                }
+            });
+
+            const sortedLeagues = Array.from(leagues.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+            
+            const currentSelected = leagueFilter.value;
+            leagueFilter.innerHTML = '<option value="all">All Leagues</option>';
+            sortedLeagues.forEach(([id, name]) => {
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = name;
+                leagueFilter.appendChild(option);
+            });
+            
+            // Try to restore selection if it still exists
+            if (leagues.has(Number(currentSelected))) {
+                leagueFilter.value = currentSelected;
+            } else {
+                leagueFilter.value = 'all';
+            }
+        }
+
+        function renderFixtures(events) {
+            const selectedLeague = leagueFilter.value;
+            const filteredEvents = selectedLeague === 'all' 
+                ? events 
+                : events.filter(e => {
+                    const tId = e.tournament.uniqueTournament?.id || e.tournament.id;
+                    return String(tId) === selectedLeague;
+                });
+
+            fixturesList.innerHTML = '';
+            
+            if (filteredEvents.length === 0) {
+                fixturesList.innerHTML = '<div class="no-data">No matches for this league.</div>';
+                return;
+            }
+
+            filteredEvents.forEach(event => {
+                const fixture = document.createElement('div');
+                fixture.className = 'fixture';
+                fixture.style.cursor = 'pointer';
+                fixture.style.flexDirection = 'column';
+                fixture.style.alignItems = 'stretch';
+                fixture.style.gap = '10px';
+                fixture.onclick = () => showFullDetails(event.id);
+
+                const startTime = new Date(event.startTimestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const isLive = event.status.type === 'inprogress';
+                const statusClass = isLive ? 'status live' : 'status';
+                const leagueName = event.tournament.uniqueTournament?.name || event.tournament.name;
+
+                let oddsHtml = '';
+                if (event.odds && event.odds.choices) {
+                    oddsHtml = '<div class="odds-row">';
+                    event.odds.choices.forEach(choice => {
+                        const val = choice.decimalValue;
+                        oddsHtml += `
+                            <div class="odd-item">
+                                <span class="odd-label">${choice.name}</span>
+                                <span class="odd-value">${val ? val.toFixed(2) : 'N/A'}</span>
+                            </div>
+                        `;
+                    });
+                    oddsHtml += '</div>';
+                }
+
+                fixture.innerHTML = `
+                    <div style="font-size: 11px; font-weight: bold; color: #004666; border-bottom: 1px solid #f0f0f0; padding-bottom: 5px; margin-bottom: 5px; display: flex; justify-content: space-between;">
+                        <span>${leagueName}</span>
+                        <span style="color: #999;">ID: ${event.id}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div class="team home">
+                            <span>${event.homeTeam.name}</span>
+                            <img src="https://api.sofascore.app/api/v1/team/${event.homeTeam.id}/image" onerror="this.src='https://www.sofascore.com/static/images/team-placeholder.png'">
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: center; min-width: 120px;">
+                            <div class="time">${startTime}</div>
+                            <div class="score">
+                                ${event.homeScore.current ?? '-'} - ${event.awayScore.current ?? '-'}
+                            </div>
+                            <div class="${statusClass}">${event.status.description}</div>
+                        </div>
+                        <div class="team away">
+                            <img src="https://api.sofascore.app/api/v1/team/${event.awayTeam.id}/image" onerror="this.src='https://www.sofascore.com/static/images/team-placeholder.png'">
+                            <span>${event.awayTeam.name}</span>
+                        </div>
+                    </div>
+                    ${oddsHtml}
+                `;
+                fixturesList.appendChild(fixture);
+            });
+        }
+
+        async function showFullDetails(eventId) {
+            modal.style.display = "block";
+            if (fullDataCache[eventId]) {
+                renderFullDetails(fullDataCache[eventId]);
+                return;
+            }
+            modalContent.innerHTML = '<div class="loading">Fetching full match data...</div>';
+            try {
+                const response = await fetch(`/api/${currentSport}/${eventId}/full-data`);
+                const data = await response.json();
+                fullDataCache[eventId] = data;
+                renderFullDetails(data);
+            } catch (error) {
+                console.error(error);
+                modalContent.innerHTML = '<p class="no-data">Error loading match details.</p>';
+            }
+        }
+
+        function renderStreakBadge(streak) {
+            const color = streak.continued ? '#27ae60' : '#e67e22';
+            return `<div style="display:flex;align-items:center;justify-content:space-between;background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:5px 10px;margin:4px 0;">
+                <span style="font-size:12px;color:#333;">${streak.name}</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:13px;font-weight:bold;color:${color};">${streak.value}</span>
+                    ${streak.continued ? '<span style="font-size:10px;color:#27ae60;">&#9654; continued</span>' : ''}
+                </div>
+            </div>`;
+        }
+
+        function renderEventMiniCard(event, perspectiveTeamId) {
+            const home = event?.homeTeam?.name || 'Home';
+            const away = event?.awayTeam?.name || 'Away';
+            const hs = event?.homeScore?.current;
+            const as = event?.awayScore?.current;
+            const score = (hs !== undefined && as !== undefined) ? `${hs} - ${as}` : 'vs';
+            const date = event?.startTimestamp
+                ? new Date(event.startTimestamp * 1000).toLocaleDateString()
+                : '-';
+
+            const isPerspectiveHome = event?.homeTeam?.id === perspectiveTeamId;
+            const sideBadge = perspectiveTeamId
+                ? (isPerspectiveHome ? 'HOME' : 'AWAY')
+                : '';
+
+            return `<div style="border:1px solid #eee;border-radius:6px;padding:8px;margin-bottom:6px;background:#fff;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <div style="font-size:12px;color:#333;line-height:1.3;">${home} <strong>${score}</strong> ${away}</div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;">
+                        <span style="font-size:10px;color:#888;">${date}</span>
+                        ${sideBadge ? `<span style="font-size:9px;background:#eef7fb;color:#004666;border:1px solid #d1e9f5;border-radius:3px;padding:1px 4px;">${sideBadge}</span>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function renderHistoryBlock(title, events, perspectiveTeamId) {
+            const list = (events || []).slice(0, 8);
+            return `<div>
+                <div style="font-size:12px;font-weight:bold;color:#004666;margin-bottom:6px;">${title}</div>
+                ${list.length
+                    ? list.map(e => renderEventMiniCard(e, perspectiveTeamId)).join('')
+                    : '<div class="no-data" style="padding:10px;">No data</div>'}
+            </div>`;
+        }
+
+        function renderH2HHistory(h2hData, homeTeam, awayTeam) {
+            if (!h2hData) return '';
+
+            let html = '<div style="margin-bottom:20px;border-bottom:2px solid #eee;padding-bottom:15px;">';
+            html += '<div class="section-title" style="text-align:center;">H2H History</div>';
+
+            html += '<div style="margin-top:10px;">';
+            html += renderHistoryBlock(`Between ${homeTeam?.name || 'Home'} vs ${awayTeam?.name || 'Away'}`, h2hData.between, null);
+            html += '</div>';
+
+            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:12px;">';
+            html += `<div>
+                ${renderHistoryBlock(`${homeTeam?.name || 'Home'} - Last`, h2hData.home?.last, homeTeam?.id)}
+                <div style="margin-top:8px;">${renderHistoryBlock(`${homeTeam?.name || 'Home'} - Next`, h2hData.home?.next, homeTeam?.id)}</div>
+            </div>`;
+            html += `<div>
+                ${renderHistoryBlock(`${awayTeam?.name || 'Away'} - Last`, h2hData.away?.last, awayTeam?.id)}
+                <div style="margin-top:8px;">${renderHistoryBlock(`${awayTeam?.name || 'Away'} - Next`, h2hData.away?.next, awayTeam?.id)}</div>
+            </div>`;
+            html += '</div>';
+            html += '</div>';
+
+            return html;
+        }
+
+        function renderStatistics(statisticsData, homeTeamName, awayTeamName) {
+            if (!statisticsData?.statistics?.length) return '';
+
+            const periods = statisticsData.statistics;
+            const periodLabels = { 'ALL': 'Full Match', '1ST': '1st Half', '2ND': '2nd Half' };
+            const uid = 'stats_' + Date.now();
+
+            let html = `<div style="margin-bottom:20px;border-bottom:2px solid #eee;padding-bottom:15px;">
+                <div class="section-title" style="text-align:center;">Match Statistics</div>
+                <div style="display:flex;justify-content:center;gap:6px;margin:10px 0;" id="${uid}_tabs">`;
+
+            periods.forEach((p, i) => {
+                html += `<button onclick="switchStatTab('${uid}','${p.period}')"
+                    id="${uid}_btn_${p.period}"
+                    style="padding:4px 12px;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;
+                    background:${i === 0 ? '#004666' : '#fff'};color:${i === 0 ? '#fff' : '#333'};">
+                    ${periodLabels[p.period] || p.period}
+                </button>`;
+            });
+
+            html += '</div>';
+
+            periods.forEach((period, i) => {
+                html += `<div id="${uid}_panel_${period.period}" style="display:${i === 0 ? 'block' : 'none'};">`;
+
+                period.groups.forEach(group => {
+                    html += `<div style="margin-bottom:14px;">
+                        <div style="font-size:11px;font-weight:bold;color:#888;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #f0f0f0;padding-bottom:4px;">${group.groupName}</div>`;
+
+                    group.statisticsItems.forEach(item => {
+                        const total = item.homeValue + item.awayValue;
+                        const homePct = total > 0 ? Math.round((item.homeValue / total) * 100) : 50;
+                        const awayPct = 100 - homePct;
+                        // compareCode: 1=home better, 2=away better, 3=equal
+                        const homeColor = item.compareCode === 1 ? '#2980b9' : item.compareCode === 3 ? '#888' : '#bbb';
+                        const awayColor = item.compareCode === 2 ? '#e74c3c' : item.compareCode === 3 ? '#888' : '#bbb';
+
+                        html += `<div style="margin-bottom:10px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                                <span style="font-size:12px;font-weight:bold;color:${homeColor};">${item.home}</span>
+                                <span style="font-size:11px;color:#999;text-align:center;flex:1;padding:0 8px;">${item.name}</span>
+                                <span style="font-size:12px;font-weight:bold;color:${awayColor};">${item.away}</span>
+                            </div>
+                            <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;gap:2px;">
+                                <div style="width:${homePct}%;background:${homeColor};border-radius:3px 0 0 3px;transition:width 0.3s;"></div>
+                                <div style="width:${awayPct}%;background:${awayColor};border-radius:0 3px 3px 0;transition:width 0.3s;"></div>
+                            </div>
+                        </div>`;
+                    });
+
+                    html += '</div>';
+                });
+
+                html += '</div>';
+            });
+
+            html += '</div>';
+            return html;
+        }
+
+        function switchStatTab(uid, period) {
+            const panels = document.querySelectorAll(`[id^="${uid}_panel_"]`);
+            const btns = document.querySelectorAll(`[id^="${uid}_btn_"]`);
+            panels.forEach(p => p.style.display = 'none');
+            btns.forEach(b => { b.style.background = '#fff'; b.style.color = '#333'; });
+            document.getElementById(`${uid}_panel_${period}`).style.display = 'block';
+            const btn = document.getElementById(`${uid}_btn_${period}`);
+            if (btn) { btn.style.background = '#004666'; btn.style.color = '#fff'; }
+        }
+
+        function renderStandings(standingsData, homeTeamId, awayTeamId) {
+            if (!standingsData?.standings?.length) return '';
+            const standing = standingsData.standings[0];
+            if (!standing?.rows?.length) return '';
+
+            const promotionColors = {
+                'Copa Libertadores': '#27ae60',
+                'Copa Libertadores Qualification': '#2ecc71',
+                'Copa Sudamericana': '#e67e22',
+                'Relegation': '#e74c3c'
+            };
+
+            let html = '<div style="margin-bottom:20px;border-bottom:2px solid #eee;padding-bottom:15px;">';
+            html += `<div class="section-title" style="text-align:center;">Standings — ${standing.name || ''}</div>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;">
+                <thead>
+                    <tr style="background:#f5f5f5;color:#666;text-align:center;">
+                        <th style="padding:6px 4px;text-align:left;">#</th>
+                        <th style="padding:6px 4px;text-align:left;">Team</th>
+                        <th style="padding:6px 4px;">P</th>
+                        <th style="padding:6px 4px;">W</th>
+                        <th style="padding:6px 4px;">D</th>
+                        <th style="padding:6px 4px;">L</th>
+                        <th style="padding:6px 4px;">GF</th>
+                        <th style="padding:6px 4px;">GA</th>
+                        <th style="padding:6px 4px;">GD</th>
+                        <th style="padding:6px 4px;font-weight:bold;color:#004666;">Pts</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            standing.rows.forEach(row => {
+                const isHome = row.team.id === homeTeamId;
+                const isAway = row.team.id === awayTeamId;
+                const highlight = isHome ? 'background:#e8f4fd;' : isAway ? 'background:#fef9e7;' : '';
+                const promotionColor = row.promotion ? (promotionColors[row.promotion.text] || '#aaa') : 'transparent';
+                html += `<tr style="border-bottom:1px solid #f0f0f0;${highlight}text-align:center;">
+                    <td style="padding:5px 4px;text-align:left;display:flex;align-items:center;gap:4px;">
+                        <span style="width:3px;height:18px;background:${promotionColor};display:inline-block;border-radius:2px;flex-shrink:0;"></span>
+                        <span>${row.position}</span>
+                    </td>
+                    <td style="padding:5px 4px;text-align:left;font-weight:${isHome || isAway ? 'bold' : 'normal'};color:${isHome ? '#2980b9' : isAway ? '#e67e22' : '#333'};">
+                        ${row.team.shortName}${isHome ? ' 🏠' : isAway ? ' ✈' : ''}
+                    </td>
+                    <td style="padding:5px 4px;">${row.matches}</td>
+                    <td style="padding:5px 4px;">${row.wins}</td>
+                    <td style="padding:5px 4px;">${row.draws}</td>
+                    <td style="padding:5px 4px;">${row.losses}</td>
+                    <td style="padding:5px 4px;">${row.scoresFor}</td>
+                    <td style="padding:5px 4px;">${row.scoresAgainst}</td>
+                    <td style="padding:5px 4px;">${row.scoreDiffFormatted}</td>
+                    <td style="padding:5px 4px;font-weight:bold;color:#004666;">${row.points}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+
+            if (standing.tieBreakingRule) {
+                html += `<div style="font-size:10px;color:#aaa;margin-top:8px;line-height:1.4;">${standing.tieBreakingRule.text}</div>`;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderGoalDistributions(goalDist, homeTeamName, awayTeamName) {
+            if (!goalDist) return '';
+            const sides = [
+                { key: 'home', name: homeTeamName, color: '#2980b9' },
+                { key: 'away', name: awayTeamName, color: '#e74c3c' }
+            ];
+            let html = '<div style="margin-bottom:20px;border-bottom:2px solid #eee;padding-bottom:15px;">';
+            html += '<div class="section-title" style="text-align:center;">Goal Distributions</div>';
+            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:10px;">';
+
+            sides.forEach(({ key, name, color }) => {
+                const teamData = goalDist[key]?.goalDistributions || [];
+                const overall = teamData.find(d => d.type === 'overall');
+                if (!overall) return;
+
+                const maxGoals = Math.max(...overall.periods.map(p => Math.max(p.scoredGoals, p.concededGoals)), 1);
+
+                html += `<div>
+                    <div style="font-weight:bold;color:#004666;margin-bottom:8px;font-size:13px;">${name}</div>
+                    <div style="display:flex;gap:10px;font-size:10px;color:#888;margin-bottom:8px;">
+                        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;background:${color};display:inline-block;border-radius:2px;"></span>Scored</span>
+                        <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;background:#ccc;display:inline-block;border-radius:2px;"></span>Conceded</span>
+                    </div>`;
+
+                overall.periods.forEach(p => {
+                    const scoredPct = Math.round((p.scoredGoals / maxGoals) * 100);
+                    const concededPct = Math.round((p.concededGoals / maxGoals) * 100);
+                    html += `<div style="margin-bottom:8px;">
+                        <div style="font-size:11px;color:#666;margin-bottom:3px;">${p.periodStart}'-${p.periodEnd}'</div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <div style="flex:1;background:#f0f0f0;border-radius:3px;height:8px;overflow:hidden;">
+                                <div style="width:${scoredPct}%;background:${color};height:100%;border-radius:3px;"></div>
+                            </div>
+                            <span style="font-size:11px;font-weight:bold;color:${color};min-width:12px;">${p.scoredGoals}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+                            <div style="flex:1;background:#f0f0f0;border-radius:3px;height:8px;overflow:hidden;">
+                                <div style="width:${concededPct}%;background:#ccc;height:100%;border-radius:3px;"></div>
+                            </div>
+                            <span style="font-size:11px;font-weight:bold;color:#999;min-width:12px;">${p.concededGoals}</span>
+                        </div>
+                    </div>`;
+                });
+
+                html += `<div style="font-size:11px;color:#888;margin-top:6px;">
+                    Total: <strong>${overall.scoredGoals}</strong> scored / <strong>${overall.concededGoals}</strong> conceded in <strong>${overall.matches}</strong> matches
+                </div></div>`;
+            });
+
+            html += '</div></div>';
+            return html;
+        }
+
+        function renderFullDetails(data) {
+            const ev = data.event || {};
+            const lineupsData = data.lineups || {};
+            const oddsData = data.odds || {};
+            const streaksData = data.teamStreaks || null;
+            const h2hData = data.h2hHistory || null;
+            const goalDistData = data.goalDistributions || null;
+            const standingsData = data.standings || null;
+            const statisticsData = data.statistics || null;
+
+            let html = `
+                <div class="event-info-header">
+                    <div class="tournament-name">${ev.tournament?.name || 'Tournament'}</div>
+                    <h2 class="lineup-title">${ev.homeTeam?.name} ${ev.homeScore?.current ?? ''} - ${ev.awayScore?.current ?? ''} ${ev.awayTeam?.name}</h2>
+                    <div style="font-size: 12px; color: #666;">Status: ${ev.status?.description} | Venue: ${ev.venue?.name || 'N/A'}</div>
+                </div>
+            `;
+            
+            html += renderStatistics(statisticsData, ev.homeTeam?.name, ev.awayTeam?.name);
+            html += renderStandings(standingsData, ev.homeTeam?.id, ev.awayTeam?.id);
+
+            if (streaksData && streaksData.general?.length) {
+                html += '<div style="margin-bottom:20px;border-bottom:2px solid #eee;padding-bottom:15px;">';
+                html += '<div class="section-title" style="text-align:center;">Team Streaks</div>';
+                html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:10px;">';
+                ['home', 'away'].forEach(side => {
+                    const teamName = side === 'home' ? ev.homeTeam?.name : ev.awayTeam?.name;
+                    const streaks = streaksData.general.filter(s => s.team === side);
+                    html += `<div>
+                        <div style="font-weight:bold;color:#004666;margin-bottom:8px;font-size:13px;">${teamName}</div>
+                        ${streaks.length ? streaks.map(renderStreakBadge).join('') : '<div class="no-data" style="padding:10px;">No streaks</div>'}
+                    </div>`;
+                });
+                html += '</div>';
+                if (streaksData.head2head?.length) {
+                    html += '<div style="margin-top:15px;"><div class="section-title">Head to Head</div>';
+                    html += streaksData.head2head.map(renderStreakBadge).join('');
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+
+            html += renderH2HHistory(h2hData, ev.homeTeam, ev.awayTeam);
+
+            html += renderGoalDistributions(goalDistData, ev.homeTeam?.name, ev.awayTeam?.name);
+
+            if (oddsData.markets && oddsData.markets.length > 0) {
+                html += '<div style="margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 15px;">';
+                html += '<div class="section-title" style="text-align: center;">All Betting Markets</div>';
+                oddsData.markets.forEach(market => {
+                    html += `
+                        <div style="margin-top: 12px;">
+                            <div style="font-size: 11px; font-weight: bold; color: #888; text-align: center; margin-bottom: 5px;">${market.marketName}</div>
+                            <div class="odds-row" style="flex-wrap: wrap;">
+                                ${market.choices.map(c => `
+                                    <div class="odd-item">
+                                        <span class="odd-label">${c.name}</span>
+                                        <span class="odd-value">${c.decimalValue ? c.decimalValue.toFixed(2) : 'N/A'}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+            }
+
+            if (lineupsData.error || !lineupsData.home || !lineupsData.away) {
+                html += `<p class="no-data">Lineups not available for this event.</p>`;
+            } else {
+                html += '<div class="lineups-grid">';
+                ['home', 'away'].forEach(side => {
+                    const team = lineupsData[side];
+                    const formationHtml = team.formation ? `<div class="formation">${team.formation}</div>` : '';
+                    
+                    html += `<div class="team-column">
+                        ${formationHtml}
+                        <div class="lineup-section">
+                            <div class="section-title">Starting Lineup</div>
+                            ${(team.players || []).map(p => {
+                                const num = p.shirtNumber || p.jerseyNumber || '';
+                                return `
+                                    <div class="player-row">
+                                        <div class="player-info">
+                                            <span class="player-pos">${p.position || ''}</span>
+                                            <span class="player-name">${p.name || 'Unknown'}</span>
+                                        </div>
+                                        <span class="player-number">${num}</span>
+                                    </div>
+                                `;
+                            }).join('') || '<div class="no-data">Not available</div>'}
+                        </div>
+                        <div class="lineup-section">
+                            <div class="section-title">Substitutes</div>
+                            ${(team.substitutes || []).map(p => {
+                                const num = p.shirtNumber || p.jerseyNumber || '';
+                                return `
+                                    <div class="player-row">
+                                        <div class="player-info">
+                                            <span class="player-pos">${p.position || ''}</span>
+                                            <span class="player-name">${p.name || 'Unknown'}</span>
+                                        </div>
+                                        <span class="player-number">${num}</span>
+                                    </div>
+                                `;
+                            }).join('') || '<div class="no-data">None</div>'}
+                        </div>
+                        ${team.missingPlayers && team.missingPlayers.length > 0 ? `
+                            <div class="lineup-section">
+                                <div class="section-title">Missing</div>
+                                ${team.missingPlayers.map(p => `
+                                    <div class="player-row">
+                                        <span class="player-name">${p.name || 'Unknown'}</span>
+                                        <span class="missing-reason">${p.reason === 1 ? 'Injured' : (p.reason === 2 ? 'Suspended' : '')}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>`;
+                });
+                html += '</div>';
+            }
+            modalContent.innerHTML = html;
+        }
+
+        closeBtn.onclick = () => modal.style.display = "none";
+        window.onclick = (event) => { if (event.target == modal) modal.style.display = "none"; }
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                currentSport = tab.dataset.sport;
+                fetchFixtures();
+            });
+        });
+        dateInput.addEventListener('change', fetchFixtures);
+        leagueFilter.addEventListener('change', () => renderFixtures(allEvents));
+        fetchFixtures();
+    </script>
+</body>
+</html>

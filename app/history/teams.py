@@ -49,7 +49,7 @@ ALIASES = {
     "psv": "psv eindhoven", "az": "az alkmaar",
     "argentinos jrs": "argentinos juniors", "urawa reds": "urawa red diamonds",
     "peterboro": "peterborough united", "gornik z": "gornik zabrze", "heart midlothian": "hearts",
-    "kasimpasa sk": "kasimpasa", "willem ii tilburg": "willem ii", "gimnasia la plata": "gimnasia l p",
+    "kasimpasa sk": "kasimpasa", "willem ii tilburg": "willem ii", 
     "atl tucuman": "atletico tucuman", "atl san luis": "atletico san luis", "ind rivadavia": "independiente rivadavia",
     "atletico goianiense": "atletico go", "athletico pr": "paranaense", "athletico paranaense": "paranaense",
     "remo pa": "clube remo", "remo": "clube remo", "atletico mg": "mineiro",
@@ -57,6 +57,10 @@ ALIASES = {
     "ae larissa": "larisa", "ofi heraklion": "ofi crete", "gs kallithea": "athens kallithea", "ae kifisias": "kifisia",
     "accrington": "accrington stanley", "karagumruk": "fatih karagumruk",
     "st gilloise": "union saint gilloise", "rb bragantino": "bragantino", "olympiakos piraeus": "olympiakos",
+    "d c united": "dc united", "kun khalifa": "kun khalifat", "cangzhou mighty lions": "cangzhou",
+    "ngezi platinum stars": "platinum",
+    "san martin s j": "san martin san juan", "gimnasia l p": "gimnasia y esgrima lp", "gimnasia la plata": "gimnasia y esgrima lp",
+    "new york rb": "new york red bulls",
     "bodrum fk": "bodrumspor", "cr flamengo": "flamengo rj", "shenzhen xinpengcheng": "shenzhen peng city",
 }
 
@@ -84,6 +88,7 @@ DENY_PAIRS = {
     frozenset({"guangzhou city", "guangzhou"}),         # Guangzhou City ≠ Guangzhou FC (Evergrande)
     frozenset({"wuhan", "wuhan three towns"}),          # Wuhan FC (Zall) ≠ Wuhan Three Towns
     frozenset({"los angeles galaxy", "los angeles"}),   # LA Galaxy ≠ LAFC
+    frozenset({"western sydney wanderers", "sydney"}),   # Western Sydney Wanderers ≠ Sydney FC
     frozenset({"lausanne", "lausanne ouchy"}),          # Lausanne-Sport ≠ Lausanne Ouchy
     frozenset({"shenzhen peng city", "shenzhen"}), frozenset({"shenzhen xinpengcheng", "shenzhen"}),
 }
@@ -265,10 +270,16 @@ class TeamResolver:
             return []
         return [scored[0][1]] if scored else []
 
+    def _cid(self, raw_name: str, country: str | None) -> str | None:
+        """Mã CLB chuẩn của tên. Bí danh viết tay có ưu tiên: 'RB Bragantino' → 'Bragantino' → cùng một mã (bảng chuẩn đôi khi liệt kê
+        hai cách viết thành hai CLB)."""
+        target = ALIASES.get(norm(raw_name))
+        return (self.dir.club_id(target, country) if target else None) or self.dir.club_id(raw_name, country)
+
     def lookup(self, raw_name: str, country: str | None = None) -> int | None:
         """Tìm đội đã có trong CSDL; KHÔNG tạo đội mới. None nếu không chắc chắn. Có `country` thì chỉ xét đội của nước đó."""
         self._scope = country
-        cid = self.dir.club_id(raw_name, country)
+        cid = self._cid(raw_name, country)
         if cid:                                          # 0) tên có trong bảng CLB chuẩn: ghép chắc chắn, không đoán
             hit = self._club_index.get(cid)
             if hit:
@@ -309,7 +320,7 @@ class TeamResolver:
         tid = self.lookup(raw_name, country)
         if tid is None:                                  # 4) không chắc → tạo đội mới, báo lại
             base = norm(raw_name)
-            cid = self.dir.club_id(raw_name, country)
+            cid = self._cid(raw_name, country)
             canon = self.dir.canonical_name(cid) if cid else ALIASES.get(base)   # tên chuẩn của CLB (bảng chuẩn) hoặc bí danh viết tay
             if canon and norm(canon) == norm(raw_name):
                 canon = None

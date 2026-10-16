@@ -1,6 +1,7 @@
 """Gom số liệu, dự đoán và kết luận thành một bản phân tích hoàn chỉnh cho một trận."""
 from __future__ import annotations
 
+from ..analytics.availability import build_availability_block
 from ..analytics.conclusions import build_conclusions
 from ..analytics.stats import head_to_head, team_form, venue_stats
 from ..database.repository import Repository
@@ -33,13 +34,15 @@ class AnalysisService:
         prediction = self._prediction_block(match)
         advanced = self._advanced(match)
         market = self._market(match, prediction)
+        availability = build_availability_block(self.repo.get_absences(match["id"]), prediction, match,
+                                                upcoming=self.predictions.is_upcoming(match))
         conclusions = build_conclusions(match["home_name"], match["away_name"], home_form, away_form, home_venue,
                                         away_venue, h2h, prediction, advanced["available"])
         return {
             "match": match, "form_n": form_n, "data_scope_note": DATA_SCOPE_NOTE,
             "form": {"home": home_form, "away": away_form},
             "venue": {"home": home_venue, "away": away_venue},
-            "head_to_head": h2h, "advanced": advanced, "prediction": prediction, "market": market, "conclusions": conclusions,
+            "head_to_head": h2h, "advanced": advanced, "prediction": prediction, "market": market, "availability": availability, "conclusions": conclusions,
             "is_test_data": match["provider"] == "fixture",
         }
 
@@ -77,6 +80,6 @@ class AnalysisService:
         stats = self.repo.get_match_statistics(match["id"])
         if not stats:
             return {"available": False,
-                    "reason": "Nguồn dữ liệu hiện tại (football-data.org gói miễn phí) không cung cấp xG, cú sút, kiểm soát bóng, "
-                              "cơ hội tạo ra, chấn thương, treo giò hay đội hình dự kiến. Hệ thống không suy đoán các thông tin này."}
+                    "reason": "Nguồn dữ liệu hiện tại không cung cấp xG, cú sút, kiểm soát bóng, cơ hội tạo ra hay đội hình dự kiến "
+                              "(tin chấn thương/vắng mặt, nếu có, nằm ở khối riêng). Hệ thống không suy đoán các thông tin này."}
         return {"available": True, "stats": stats}

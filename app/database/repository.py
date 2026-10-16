@@ -227,6 +227,24 @@ class Repository:
                    AND utc_date >= ? AND utc_date <= ? LIMIT 1""", (league_id, home_id, away_id, date_from, date_to)).fetchone()
             return dict(r) if r else None
 
+    def find_same_result(self, league_id: int, home_id: int, away_id: int, date_from: str, date_to: str, hg: int, ag: int) -> dict | None:
+        """Trận đã đá cùng giải, cùng cặp đội và chiều, CÙNG tỷ số trong khoảng ngày: một nguồn ghi ngày khác (đá bù) cho cùng một trận."""
+        with self.db.connect() as c:
+            r = c.execute(
+                """SELECT id, status, provider, utc_date FROM matches WHERE league_id=? AND home_team_id=? AND away_team_id=?
+                   AND status='FINISHED' AND home_score=? AND away_score=? AND utc_date >= ? AND utc_date <= ? LIMIT 1""",
+                (league_id, home_id, away_id, hg, ag, date_from, date_to)).fetchone()
+            return dict(r) if r else None
+
+    def find_stale_scheduled(self, league_id: int, home_id: int, away_id: int, date_from: str, date_to: str, before: str) -> dict | None:
+        """Trận lịch sử còn 'chưa đá' mà giờ đá đã qua từ lâu (nhiều khả năng bị hoãn rồi đá bù ở ngày khác). Không lấy trận football-data.org."""
+        with self.db.connect() as c:
+            r = c.execute(
+                """SELECT id, status, provider, utc_date FROM matches WHERE league_id=? AND home_team_id=? AND away_team_id=?
+                   AND status='SCHEDULED' AND provider != 'football-data.org' AND utc_date >= ? AND utc_date <= ? AND utc_date < ?
+                   ORDER BY utc_date LIMIT 1""", (league_id, home_id, away_id, date_from, date_to, before)).fetchone()
+            return dict(r) if r else None
+
     def add_history_match(self, provider: str, league_id: int, m: dict, home_id: int, away_id: int) -> tuple[int, bool]:
         """Thêm trận từ nguồn lịch sử; không ghi đè nếu (provider, external_id) đã có. Trả về (id, vừa_thêm_mới)."""
         with self.db.connect() as c:
@@ -265,6 +283,19 @@ class Repository:
             r = c.execute("SELECT * FROM match_odds WHERE match_id=?", (match_id,)).fetchone()
             return dict(r) if r else None
 
+    def replace_absences(self, match_id: int, source: str, rows: list[dict]) -> None:
+        """Thay toàn bộ danh sách vắng mặt của một trận bằng danh sách mới (rows: team_id, player, kind, reason)."""
+        with self.db.connect() as c:
+            c.execute("DELETE FROM match_absences WHERE match_id=?", (match_id,))
+            for r in rows:
+                c.execute("""INSERT OR REPLACE INTO match_absences (match_id, team_id, player, kind, reason, source, updated_at)
+                             VALUES (?,?,?,?,?,?,?)""",
+                          (match_id, r["team_id"], r["player"], r["kind"], r.get("reason"), source, _now()))
+
+    def get_absences(self, match_id: int) -> list[dict]:
+        with self.db.connect() as c:
+            return _dicts(c.execute("SELECT * FROM match_absences WHERE match_id=? ORDER BY team_id, kind, player", (match_id,)))
+
     def reset_history_matches(self, providers: Sequence[str]) -> int:
         """Xóa các trận do nguồn lịch sử thêm vào (và dữ liệu phụ thuộc) để nhập lại từ đầu. Không đụng trận của football-data.org."""
         ph = ",".join("?" * len(providers))
@@ -273,7 +304,7 @@ class Repository:
             n = c.execute(f"SELECT COUNT(*) FROM matches WHERE provider IN ({ph})", list(providers)).fetchone()[0]
             c.execute(f"DELETE FROM prediction_results WHERE match_id IN ({ids})", list(providers))
             c.execute(f"DELETE FROM predictions WHERE match_id IN ({ids})", list(providers))
-            for table in ("analysis_articles", "match_statistics", "match_odds"):
+            for table in ("analysis_articles", "match_statistics", "match_odds", "match_absences"):
                 c.execute(f"DELETE FROM {table} WHERE match_id IN ({ids})", list(providers))
             c.execute(f"DELETE FROM matches WHERE provider IN ({ph})", list(providers))
             c.execute(f"DELETE FROM history_imports WHERE source IN ({ph})", list(providers))

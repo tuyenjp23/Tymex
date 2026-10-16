@@ -226,3 +226,5 @@ code, .code { font-family: Consolas, "Cascadia Mono", monospace; background: var
 .concl .line.score .sc { display: inline-block; margin-right: .6rem; padding: .05rem .45rem; border: 1px solid var(--line); border-radius: 6px; }
 .concl .line.score .sc.first { border-color: currentColor; }
 .concl .line.score .k { background: var(--panel-2); border-left: 3px solid var(--draw, #888); }
+ul.plain { list-style: none; margin: .2rem 0 .6rem; padding: 0; }
+ul.plain li { padding: .15rem 0; }

@@ -53,14 +53,14 @@ def test_run_history_espn_with_fake_fetch(repo):
 
     def fetch(url):
         calls.append(url)
-        return json.dumps(ESPN).encode() if "kor.1" in url else None
+        return json.dumps(ESPN).encode() if ("kor.1" in url or "usa.1" in url) else None
 
     out = run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None)
     assert out["added"] >= 1 and not out["errors"]
-    assert all("espn.com" in u for u in calls) and len(calls) >= 3          # nhiều khoảng tháng
+    assert all("espn.com" in u for u in calls) and len(calls) >= 3          # 1 lần thử + nhiều khoảng tháng
     calls.clear()
     run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None)
-    assert 1 <= len(calls) <= 5                                            # lần sau chỉ lấy cửa sổ gần hiện tại
+    assert 1 <= len(calls) <= 7                                            # lần sau chỉ lấy cửa sổ gần hiện tại
 
 
 def test_all_specs_have_a_source():
@@ -89,7 +89,7 @@ def test_espn_one_bad_month_does_not_drop_season(repo):
         calls["n"] += 1
         if "20250101" in url:
             raise RuntimeError("400 Bad Request")
-        return json.dumps(ESPN).encode() if "kor.1" in url else None
+        return json.dumps(ESPN).encode() if ("kor.1" in url or "usa.1" in url) else None
 
     out = run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None)
     assert out["added"] >= 1
@@ -137,3 +137,34 @@ def test_directory_team_found_when_db_has_other_spelling(repo):
     r.countries[tid] = {"Portugal"}
     r._rebuild()
     assert r.resolve("Sp Lisbon", "Portugal") == tid
+
+
+def test_espn_probe_falls_back_to_shorter_spans(repo):
+    """ESPN từ chối khoảng dài (400) nhưng nhận khoảng 7 ngày: runner phải tự chuyển sang 7 ngày."""
+    from datetime import datetime
+
+    def fetch(url):
+        if "dates=" in url and "-" in url.split("dates=")[1]:
+            d1, d2 = url.split("dates=")[1].split("-")
+            span = (datetime.strptime(d2, "%Y%m%d") - datetime.strptime(d1, "%Y%m%d")).days + 1
+            if span > 7:
+                raise RuntimeError("400 Failed to get events endpoint")
+        elif "dates=" in url and len(url.split("dates=")[1]) == 8:
+            pass
+        return json.dumps(ESPN).encode() if ("kor.1" in url or "usa.1" in url) else None
+
+    logs = []
+    out = run_history(repo, seasons=1, league_codes=["KR1"], today=date(2025, 3, 10), fetch=fetch, log=logs.append)
+    assert any("7 ngày" in l and "dùng được" in l for l in logs)
+    assert out["added"] >= 1 and not out["errors"]
+
+
+def test_espn_unusable_is_one_error_not_many(repo):
+    def fetch(url):
+        if "espn.com" in url:
+            raise RuntimeError("400 nope")
+        return None
+
+    out = run_history(repo, seasons=2, league_codes=["KR1", "AU1", "SA1"], today=date(2025, 3, 10), fetch=fetch, log=lambda s: None,
+                      sources=("espn",))
+    assert len(out["errors"]) == 1

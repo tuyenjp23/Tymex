@@ -18,7 +18,8 @@ CO_UK_URL = "https://www.football-data.co.uk/mmz4281/{yy}{zz}/{div}.csv"
 OPENFOOTBALL_URL = "https://raw.githubusercontent.com/openfootball/football.json/master/{season}/{code}.json"
 
 CO_UK_NEW_URL = "https://www.football-data.co.uk/new/{code}.csv"
-ESPN_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={d1}-{d2}"
+ESPN_HOSTS = ("site.api.espn.com", "site.web.api.espn.com")
+ESPN_URL = "https://{host}/apis/site/v2/sports/soccer/{slug}/scoreboard?dates={dates}"
 ODDS_COLUMNS_NEW = [("AvgH", "AvgD", "AvgA", "Avg"), ("PH", "PD", "PA", "Pinn"), ("B365H", "B365D", "B365A", "B365")]
 
 # (cột chủ, hòa, khách, nhãn nguồn): ưu tiên trung bình thị trường lúc đóng cửa
@@ -152,8 +153,9 @@ def co_uk_new_url(code: str) -> str:
     return CO_UK_NEW_URL.format(code=code)
 
 
-def espn_url(slug: str, d1: str, d2: str) -> str:
-    return ESPN_URL.format(slug=slug, d1=d1, d2=d2)
+def espn_url(slug: str, d1: str, d2: str | None = None, host: str = ESPN_HOSTS[0]) -> str:
+    """d2 = None hoặc trùng d1: hỏi đúng một ngày (dates=YYYYMMDD); ngược lại hỏi cả khoảng (dates=YYYYMMDD-YYYYMMDD)."""
+    return ESPN_URL.format(host=host, slug=slug, dates=d1 if (d2 is None or d2 == d1) else f"{d1}-{d2}")
 
 
 def parse_co_uk_new_csv(text: str, *, code: str, season: int, tz: str) -> list[dict]:

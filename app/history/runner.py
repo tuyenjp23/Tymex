@@ -9,7 +9,7 @@ from ..utils import to_iso, utcnow
 from .importer import import_matches
 from .leagues import BY_CODE, HIST_LEAGUES, current_season
 from .sources import (
-    co_uk_new_url, co_uk_url, decode_bytes, espn_url, openfootball_url, parse_co_uk_csv, parse_co_uk_new_csv, parse_espn,
+    ESPN_HOSTS, co_uk_new_url, co_uk_url, decode_bytes, espn_url, openfootball_url, parse_co_uk_csv, parse_co_uk_new_csv, parse_espn,
     parse_openfootball, parse_world_txt, world_url,
 )
 from .teams import TeamResolver
@@ -19,7 +19,10 @@ SRC_CO_NEW, SRC_ESPN, SRC_WORLD = "football-data.co.uk/new", "espn", "openfootba
 ALL_SOURCES = (SRC_CO_UK, SRC_OF, SRC_CO_NEW, SRC_ESPN, SRC_WORLD)
 ESPN_SEASONS = 3          # ESPN gọi theo từng tháng nên chỉ lấy 3 mùa gần nhất để nhẹ
 # Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
-RESOLVER_VERSION = 8   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
+RESOLVER_VERSION = 9   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
+
+
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 
 def default_fetch(url: str) -> bytes | None:
@@ -28,7 +31,8 @@ def default_fetch(url: str) -> bytes | None:
     last = None
     for _ in range(3):
         try:
-            r = httpx.get(url, timeout=30, follow_redirects=True, headers={"User-Agent": "tymex-history/1.0"})
+            ua = BROWSER_UA if "espn.com" in url else "tymex-history/1.0"
+            r = httpx.get(url, timeout=30, follow_redirects=True, headers={"User-Agent": ua, "Accept": "application/json, text/plain, */*"})
             if r.status_code == 404:
                 return None
             if 400 <= r.status_code < 500 and r.status_code != 429:
@@ -43,8 +47,29 @@ def default_fetch(url: str) -> bytes | None:
     raise RuntimeError(f"{url}: {last}")
 
 
-def _espn_rows(spec: dict, season: int, cur: int, today: date, now_iso: str, fetch, repo) -> list[dict]:
-    """ESPN trả theo khoảng ngày: gọi từng tháng. Mùa hiện tại: lần đầu lấy cả mùa, các lần sau chỉ lấy [hôm nay-45 ngày, hôm nay+75 ngày]."""
+def _espn_probe(fetch, today: date, log) -> tuple[str, int] | None:
+    """ESPN từng trả 400 cho khoảng ngày dài: thử lần lượt (máy chủ, số ngày mỗi lần gọi) rồi nhớ cách chạy được.
+    Trả (host, span) hoặc None nếu không cách nào chạy."""
+    end = today - timedelta(days=20)
+    for host in ESPN_HOSTS:
+        for span in (31, 7, 1):
+            d1 = end - timedelta(days=span - 1)
+            url = espn_url("usa.1", d1.strftime("%Y%m%d"), end.strftime("%Y%m%d"), host)
+            try:
+                raw = fetch(url)
+                if raw and (b'"events"' in raw or b'"leagues"' in raw):
+                    log(f"  * ESPN dùng được: máy chủ {host}, mỗi lần gọi {span} ngày")
+                    return host, span
+                log(f"  * ESPN thử {host} {span} ngày: phản hồi rỗng/lạ")
+            except Exception as exc:   # noqa: BLE001
+                log(f"  * ESPN thử {host} {span} ngày: lỗi {str(exc)[:160]}")
+    return None
+
+
+def _espn_rows(spec: dict, season: int, cur: int, today: date, now_iso: str, fetch, repo, plan: tuple[str, int]) -> list[dict]:
+    """ESPN trả theo khoảng ngày. Mùa hiện tại: lần đầu lấy cả mùa, các lần sau chỉ lấy [hôm nay-45 ngày, hôm nay+75 ngày].
+    Nếu ESPN chỉ nhận từng ngày (span=1) thì chỉ lấy khoảng gần đây để không phải gọi hàng nghìn lần."""
+    host, span = plan
     if spec.get("calendar"):
         start, end = date(season, 1, 1), date(season, 12, 31)
     else:
@@ -54,15 +79,22 @@ def _espn_rows(spec: dict, season: int, cur: int, today: date, now_iso: str, fet
         if repo.history_import_done(SRC_ESPN, marker, season):
             start = max(start, today - timedelta(days=45))
         end = min(end, today + timedelta(days=75))
+    if span == 1:
+        start = max(start, today - timedelta(days=45)); end = min(end, today + timedelta(days=75))
+        if season != cur:
+            return []
     rows: list[dict] = []
     seen: set[str] = set()
     d = start
     errs: list[str] = []
     while d <= end:
-        nxt = min((d.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), end)
+        if span >= 31:
+            nxt = min((d.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1), end)
+        else:
+            nxt = min(d + timedelta(days=span - 1), end)
         try:
-            raw = fetch(espn_url(spec["espn"], d.strftime("%Y%m%d"), nxt.strftime("%Y%m%d")))
-        except Exception as exc:   # noqa: BLE001  một tháng lỗi không làm mất cả mùa
+            raw = fetch(espn_url(spec["espn"], d.strftime("%Y%m%d"), nxt.strftime("%Y%m%d"), host))
+        except Exception as exc:   # noqa: BLE001  một đợt lỗi không làm mất cả mùa
             errs.append(str(exc)); raw = None
         if raw:
             for r in parse_espn(decode_bytes(raw), slug=spec["espn"], season=season, today_iso=now_iso):
@@ -90,6 +122,7 @@ def run_history(repo, *, seasons: int = 5, league_codes: list[str] | None = None
             log(f"  * Đặt lại lịch sử (đổi cách ghép tên đội): xóa {removed} trận cũ, nhập lại từ đầu")
     resolver = TeamResolver(repo)
     new_cache: dict = {}
+    espn_plan: list = []          # rỗng = chưa thử; [None] = ESPN không dùng được; [(host, span)] = cách chạy được
     totals = {"added": 0, "duplicates": 0, "odds": 0, "errors": []}
     now_iso = to_iso(utcnow())
     for spec in specs:
@@ -130,7 +163,13 @@ def run_history(repo, *, seasons: int = 5, league_codes: list[str] | None = None
                         raw = new_cache[url]
                         rows = parse_co_uk_new_csv(decode_bytes(raw), code=spec["co_uk_new"], season=season, tz=spec["tz"]) if raw else []
                     else:
-                        rows = _espn_rows(spec, season, cur, today, now_iso, fetch, repo)
+                        if not espn_plan:
+                            espn_plan.append(_espn_probe(fetch, today, log))
+                            if espn_plan[0] is None:
+                                totals["errors"].append("espn: không cách gọi nào chạy được (xem các dòng '* ESPN thử')")
+                        if espn_plan[0] is None:
+                            continue
+                        rows = _espn_rows(spec, season, cur, today, now_iso, fetch, repo, espn_plan[0])
                         raw = True if rows else None
                 except Exception as exc:   # noqa: BLE001
                     msg = f"{source} {spec['code']} {season}: {exc}"

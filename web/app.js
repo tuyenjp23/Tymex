@@ -282,6 +282,25 @@ function marketBlock(a) {
     <div class="notice ${k.level === "agree" || k.level === "none" ? "" : "warn"}" style="margin-top:.8rem">${esc(k.verdict)}</div></section>`;
 }
 
+function availabilityBlock(a) {
+  const v = a.availability, m = a.match;
+  if (!v) return "";
+  if (!v.available) return `<section class="block"><h2>Vắng mặt / chấn thương</h2><div class="notice">${esc(v.reason)}</div></section>`;
+  const col = (t) => {
+    const li = (arr, label) => arr.length ? `<h3 class="small muted">${label}</h3><ul class="plain">${arr.map((x) => `<li>${esc(x.player)}${x.reason ? ` <span class="muted small">(${esc(x.reason)})</span>` : ""}</li>`).join("")}</ul>` : "";
+    return `<div><h3>${esc(t.team)}</h3>${li(t.out, "Vắng mặt")}${li(t.doubtful, "Nghi ngờ")}${!t.out.length && !t.doubtful.length ? '<p class="muted small">Chưa có tin.</p>' : ""}</div>`;
+  };
+  const adj = v.adjusted ? (() => {
+    const names = { home: `${m.home_name} thắng`, draw: "Hòa", away: `${m.away_name} thắng` };
+    return `<div class="t-scroll"><table class="t"><thead><tr><th>Kết quả</th><th class="r">Dự đoán đã lưu</th><th class="r">Điều chỉnh (tham khảo)</th></tr></thead><tbody>${["home", "draw", "away"].map((x) =>
+      `<tr><td>${esc(names[x])}</td><td class="r num">${pct(v.adjusted.before[x] * 100, 0)}%</td><td class="r num">${pct(v.adjusted.after[x] * 100, 0)}%</td></tr>`).join("")}</tbody></table></div>
+      <div class="notice warn" style="margin-top:.8rem">${esc(v.note)}</div>` : "";
+  })() : "";
+  return `<section class="block"><h2>Vắng mặt / chấn thương</h2>
+    <p class="block-sub">Nguồn: API-Football. Cập nhật lúc ${esc(fmtStamp(v.updated_at))} (${esc(tzLabel())}). Tin có thể chưa đầy đủ; đội hình xuất phát chỉ có sát giờ đá.</p>
+    <div class="cols">${col(v.teams.home)}${col(v.teams.away)}</div>${adj}</section>`;
+}
+
 function formBlock(a, n) {
   const col = (name, f, cls) => `<div><h3>${esc(name)} <span class="muted small">(${cls})</span></h3>
     <div class="chips" style="margin-top:.5rem">${f.games.map((g) => resChip(g.result)).join("") || '<span class="muted">Chưa có dữ liệu</span>'}</div>
@@ -332,7 +351,7 @@ async function pageMatch(parts) {
         <div class="versus"><div class="vteam home">${crest(m.home_crest, m.home_name)}<h2>${esc(m.home_name)}</h2><span class="role">Chủ nhà (sân nhà)</span></div>
         <div class="vscore">${has ? `${m.home_score} - ${m.away_score}` : "vs"}<small>${esc(STATUS_LABEL[m.status] || m.status)}${done && m.home_ht !== null ? ` · H1 ${m.home_ht}-${m.away_ht}` : ""}</small></div>
         <div class="vteam away">${crest(m.away_crest, m.away_name)}<h2>${esc(m.away_name)}</h2><span class="role">Đội khách (sân khách)</span></div></div></section>`;
-    app.insertAdjacentHTML("beforeend", predictionBlock(a) + marketBlock(a) + formBlock(a, a.form_n) + venueBlock(a) + h2hBlock(a));
+    app.insertAdjacentHTML("beforeend", predictionBlock(a) + marketBlock(a) + availabilityBlock(a) + formBlock(a, a.form_n) + venueBlock(a) + h2hBlock(a));
     app.insertAdjacentHTML("beforeend", `<section class="block"><h2>Thống kê nâng cao</h2><div class="notice">${esc(a.advanced.available ? "Có dữ liệu nâng cao." : a.advanced.reason)}</div></section>`);
     app.insertAdjacentHTML("beforeend", conclusionBlock(a));
     app.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", async () => { n = Number(b.dataset.n); await load(); }));

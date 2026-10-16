@@ -213,5 +213,5 @@ def predict(league_matches: list[dict], home_id: int, away_id: int, kickoff: str
                     "lookback_days": params.lookback_days},
         "strengths": {k: round(est[k], 3) for k in ("home_attack", "home_defence", "away_attack", "away_defence",
                                                     "league_avg_home", "league_avg_away")},
-        "notes": ["Mô hình chỉ dựa trên tỷ số các trận đã kết thúc; không biết chấn thương, treo giò, đội hình, lịch dồn, thời tiết."],
+        "notes": ["Mô hình chỉ dựa trên tỷ số các trận đã kết thúc; không tự biết chấn thương, treo giò, đội hình, lịch dồn, thời tiết (tin vắng mặt nếu có chỉ hiện ở khối riêng, không đổi con số này)."],
     }

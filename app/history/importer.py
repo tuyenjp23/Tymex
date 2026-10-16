@@ -34,8 +34,24 @@ def import_matches(repo, *, source: str, spec: dict, matches: list[dict], resolv
                     m["status"] == "FINISHED" or (m["status"] == "SCHEDULED" and near.get("utc_date") != m["utc_date"])):
                 repo.update_history_match(match_id, m)
         else:
-            match_id, created = repo.add_history_match(source, league_id, m, home_id, away_id)
-            added += int(created)
+            # trận bị hoãn: nguồn cũ giữ ngày gốc (chưa đá), nguồn mới có ngày đá bù → cập nhật trận cũ thay vì thêm trận thứ hai
+            stale = repo.find_stale_scheduled(league_id, home_id, away_id, to_iso(t - timedelta(days=75)), to_iso(t + timedelta(days=75)),
+                                              to_iso(t - timedelta(hours=40)))
+            same = None
+            if not stale and m["status"] == "FINISHED":
+                # cùng cặp đội, chiều và tỷ số trong 10 ngày: hai nguồn ghi hai ngày khác nhau cho cùng một trận đá bù
+                same = repo.find_same_result(league_id, home_id, away_id, to_iso(t - timedelta(days=10)), to_iso(t + timedelta(days=10)),
+                                             m["home_score"], m["away_score"])
+            if stale:
+                match_id, created = stale["id"], False
+                dup += 1
+                repo.update_history_match(match_id, m)
+            elif same:
+                match_id, created = same["id"], False
+                dup += 1
+            else:
+                match_id, created = repo.add_history_match(source, league_id, m, home_id, away_id)
+                added += int(created)
         if m.get("odds") and m["status"] == "FINISHED":
             repo.save_odds(match_id, m["odds_source"], *m["odds"])
             odds_n += 1

@@ -124,3 +124,19 @@ class ApiFootball:
             events.append({**fixtures[fid], "p_home": sum(r[0] for r in rows) / n, "p_draw": sum(r[1] for r in rows) / n,
                            "p_away": sum(r[2] for r in rows) / n, "bookmakers": n})
         return events, {"remaining": self._remaining, "calls": calls}
+
+    def injuries(self, code: str, day: str, season: int) -> tuple[list[dict], dict]:
+        """Cầu thủ vắng mặt/nghi ngờ của các trận trong một ngày (YYYY-MM-DD) của một giải: 1 request."""
+        lid = LEAGUE_IDS.get(code)
+        if not lid:
+            raise OddsApiError(f"Giải {code} chưa được ánh xạ sang API-Football.", "unknown_sport")
+        data = self._get("/injuries", {"league": lid, "season": season, "date": day})
+        out = []
+        for row in data.get("response") or []:
+            pl, tm, fx = row.get("player") or {}, row.get("team") or {}, row.get("fixture") or {}
+            kind = {"missing fixture": "out", "questionable": "doubtful"}.get(str(pl.get("type") or "").strip().lower())
+            if not (pl.get("name") and tm.get("name") and fx.get("date") and kind):
+                continue
+            out.append({"team": tm["name"], "player": pl["name"], "kind": kind, "reason": pl.get("reason"),
+                        "commence_time": fx["date"]})
+        return out, {"remaining": self._remaining, "calls": 1}
