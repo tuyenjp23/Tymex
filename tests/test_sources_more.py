@@ -65,7 +65,7 @@ def test_run_history_espn_with_fake_fetch(repo):
 
 def test_all_specs_have_a_source():
     for x in HIST_LEAGUES:
-        assert x.get("co_uk") or x.get("openfootball") or x.get("co_uk_new") or x.get("espn"), x["code"]
+        assert x.get("co_uk") or x.get("openfootball") or x.get("co_uk_new") or x.get("espn") or x.get("world"), x["code"]
     assert len({x["code"] for x in HIST_LEAGUES}) == len(HIST_LEAGUES)
 
 

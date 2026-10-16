@@ -10,16 +10,16 @@ from .importer import import_matches
 from .leagues import BY_CODE, HIST_LEAGUES, current_season
 from .sources import (
     co_uk_new_url, co_uk_url, decode_bytes, espn_url, openfootball_url, parse_co_uk_csv, parse_co_uk_new_csv, parse_espn,
-    parse_openfootball,
+    parse_openfootball, parse_world_txt, world_url,
 )
 from .teams import TeamResolver
 
 SRC_CO_UK, SRC_OF = "football-data.co.uk", "openfootball"
-SRC_CO_NEW, SRC_ESPN = "football-data.co.uk/new", "espn"
-ALL_SOURCES = (SRC_CO_UK, SRC_OF, SRC_CO_NEW, SRC_ESPN)
+SRC_CO_NEW, SRC_ESPN, SRC_WORLD = "football-data.co.uk/new", "espn", "openfootball/world"
+ALL_SOURCES = (SRC_CO_UK, SRC_OF, SRC_CO_NEW, SRC_ESPN, SRC_WORLD)
 ESPN_SEASONS = 3          # ESPN gọi theo từng tháng nên chỉ lấy 3 mùa gần nhất để nhẹ
 # Tăng số này khi cách ghép tên đội đổi: lần chạy kế tiếp sẽ xóa phần lịch sử cũ (ghép sai) và nhập lại một lần
-RESOLVER_VERSION = 7   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
+RESOLVER_VERSION = 8   # tăng khi đổi cách ghép tên đội (bí danh, cấm ghép): lần chạy kế tiếp nhập lại lịch sử
 
 
 def default_fetch(url: str) -> bytes | None:
@@ -105,6 +105,8 @@ def run_history(repo, *, seasons: int = 5, league_codes: list[str] | None = None
                     continue
                 if source == SRC_CO_NEW and not spec.get("co_uk_new"):
                     continue
+                if source == SRC_WORLD and not spec.get("world"):
+                    continue
                 if source == SRC_ESPN and (not spec.get("espn") or season <= cur - ESPN_SEASONS):
                     continue
                 try:
@@ -116,6 +118,11 @@ def run_history(repo, *, seasons: int = 5, league_codes: list[str] | None = None
                         raw = fetch(openfootball_url(spec["openfootball"], season, bool(spec.get("calendar"))))
                         rows = parse_openfootball(decode_bytes(raw), code=spec["openfootball"], season=season,
                                                   tz=spec["tz"], today_iso=now_iso) if raw else []
+                    elif source == SRC_WORLD:
+                        w = spec["world"]
+                        raw = fetch(world_url(w, season, bool(w.get("calendar", spec.get("calendar")))))
+                        rows = parse_world_txt(decode_bytes(raw), code=w["code"], season=season,
+                                               tz=spec["tz"], today_iso=now_iso) if raw else []
                     elif source == SRC_CO_NEW:
                         url = co_uk_new_url(spec["co_uk_new"])
                         if url not in new_cache:

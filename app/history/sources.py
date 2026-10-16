@@ -231,3 +231,102 @@ def parse_espn(text: str, *, slug: str, season: int, today_iso: str) -> list[dic
         except (AttributeError, TypeError, ValueError):
             continue
     return out
+
+
+# ---------------------------------------------------------------- openfootball/world (Football.TXT)
+WORLD_URL = "https://raw.githubusercontent.com/openfootball/world/master/{path}/{season}_{code}.txt"
+_MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+_DATE_RE = re.compile(r"^\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?\s*$")
+_DATE_DMY_RE = re.compile(r"^\s+(\d{1,2})\.(\d{1,2})\.(?:(\d{4}))?\s*$")
+_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_ROUND_RE = re.compile(r"^[▪»]\s*(.+?)\s*$")
+_MATCH_RE = re.compile(r"^\s+(?:(\d{1,2}[:.]\d{2})\s+)?(.+?)\s+v\s+(.+?)\s*$")
+_SCORE_TAIL = re.compile(r"^(.*?)\s+(\d{1,2})-(\d{1,2})(?:\s+\((\d{1,2})-(\d{1,2})\))?(?:\s+(.*))?$")
+
+
+def world_url(spec_world: dict, season: int, calendar: bool) -> str:
+    folder = str(season) if calendar else f"{season}-{(season + 1) % 100:02d}"
+    return WORLD_URL.format(path=spec_world["path"], season=folder, code=spec_world["code"])
+
+
+def _guess_year(season: int, mon: int, dd: int, wd: str | None) -> int:
+    """Dòng ngày không ghi năm: chọn năm (mùa hoặc mùa+1) mà thứ trong tuần khớp; không có thứ thì theo tháng (từ tháng 7 là năm bắt đầu mùa)."""
+    if wd:
+        for y in (season, season + 1):
+            try:
+                if _WEEKDAYS[datetime(y, mon, dd).weekday()] == wd:
+                    return y
+            except ValueError:
+                pass
+    return season if mon >= 7 else season + 1
+
+
+def parse_world_txt(text: str, *, code: str, season: int, tz: str, today_iso: str) -> list[dict]:
+    """Đọc file Football.TXT của openfootball/world.
+
+    Dòng ngày có thể không ghi năm ("Fri Aug 23", hoặc kiểu "08.09."): xem _guess_year.
+    Trận có ghi chú kéo dài (a.e.t., pen.) bị bỏ vì tỷ số khi đó không phải kết quả 90 phút.
+    """
+    out: list[dict] = []
+    day: str | None = None
+    last_time: str | None = None
+    matchday: int | None = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or line.startswith("="):
+            continue
+        r = _ROUND_RE.match(line)
+        if r:
+            n = re.search(r"(\d+)", r.group(1))
+            matchday = int(n.group(1)) if n and "atchday" in r.group(1) else None
+            continue
+        d = _DATE_RE.match(line)
+        dm = None if d else _DATE_DMY_RE.match(line)
+        if d or dm:
+            if d:
+                wd, mon, dd, yy = d.group(1), _MONTHS.get(d.group(2)), int(d.group(3)), d.group(4)
+            else:
+                wd, mon, dd, yy = None, int(dm.group(2)), int(dm.group(1)), dm.group(3)
+            if not mon:
+                continue
+            year = int(yy) if yy else _guess_year(season, mon, dd, wd)
+            try:
+                day = f"{year:04d}-{mon:02d}-{dd:02d}"
+                datetime.strptime(day, "%Y-%m-%d")
+            except ValueError:
+                day = None
+            last_time = None
+            continue
+        m = _MATCH_RE.match(line)
+        if not (m and day):
+            continue
+        hhmm, home, rest = m.group(1), m.group(2).strip(), m.group(3).strip()
+        if hhmm:
+            last_time = hhmm
+        else:
+            hhmm = last_time                  # dòng không ghi giờ: dùng giờ của dòng trước cùng ngày
+        hg = ag = hh = ha = None
+        t = _SCORE_TAIL.match(rest)
+        if t:
+            extra = (t.group(6) or "").lower()
+            if "a.e.t" in extra or "aet" in extra or "pen" in extra:
+                continue
+            away = t.group(1).strip()
+            hg, ag = int(t.group(2)), int(t.group(3))
+            if t.group(4) is not None:
+                hh, ha = int(t.group(4)), int(t.group(5))
+        else:
+            away = rest
+        if not home or not away:
+            continue
+        utc = _to_utc(day, hhmm.replace(".", ":") if hhmm else None, tz)
+        if hg is None and utc <= today_iso:
+            continue
+        out.append({
+            "external_id": f"ow:{code}:{season}:{day.replace('-', '')}:{_slug(home)}:{_slug(away)}",
+            "season": season, "matchday": matchday, "utc_date": utc,
+            "status": "FINISHED" if hg is not None else "SCHEDULED",
+            "home": home, "away": away, "home_score": hg, "away_score": ag,
+            "home_ht": hh, "away_ht": ha,
+            "winner": _winner(hg, ag) if hg is not None else None, "odds": None, "odds_source": None,
+        })
+    return out

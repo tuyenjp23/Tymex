@@ -55,6 +55,8 @@ ALIASES = {
     "remo pa": "clube remo", "remo": "clube remo", "atletico mg": "mineiro",
     "heart of midlothian": "hearts", "buyuksehyr": "istanbul basaksehir", "dep riestra": "deportivo riestra",
     "ae larissa": "larisa", "ofi heraklion": "ofi crete", "gs kallithea": "athens kallithea", "ae kifisias": "kifisia",
+    "accrington": "accrington stanley", "karagumruk": "fatih karagumruk",
+    "st gilloise": "union saint gilloise", "rb bragantino": "bragantino", "olympiakos piraeus": "olympiakos",
     "bodrum fk": "bodrumspor", "cr flamengo": "flamengo rj", "shenzhen xinpengcheng": "shenzhen peng city",
 }
 
