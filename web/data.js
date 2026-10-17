@@ -37,7 +37,7 @@ const auth = {
     throw new Error("Không đăng nhập được: " + msg);
   },
   async signOut() { await sb.auth.signOut(); },
-  onChange(cb) { sb?.auth.onAuthStateChange((_event, session) => cb(session)); },
+  onChange(cb) { sb?.auth.onAuthStateChange((event, session) => cb(session, event)); },
 };
 
 /* ---------------------------------------------------------------- tiện ích */
@@ -158,4 +158,10 @@ async function cloudApi(path, opts = {}) {
   throw failure("Đường dẫn không tồn tại.", "not_found", 404);
 }
 
-window.Tymex = { auth, cloudApi, clearCache, configured: () => !!sb };
+/* Quá 25 giây không có phản hồi thì báo lỗi (có nút Thử lại) thay vì quay "Đang tải" mãi. */
+const cloudApiTimed = (path, opts) => Promise.race([
+  cloudApi(path, opts),
+  new Promise((_, rej) => setTimeout(() => rej(failure("Máy chủ phản hồi quá lâu (25 giây). Bấm Thử lại; nếu vẫn vậy, thử mở trang ở cửa sổ ẩn danh hoặc xóa dữ liệu trang rồi đăng nhập lại.", "timeout", 504)), 25000)),
+]);
+
+window.Tymex = { auth, cloudApi: cloudApiTimed, clearCache, configured: () => !!sb };

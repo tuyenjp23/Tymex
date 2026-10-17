@@ -474,7 +474,13 @@ function init() {
   sel.addEventListener("change", () => { state.tz = sel.value; localStorage.setItem("tz", sel.value); render(); });
   $("#sync-btn").addEventListener("click", () => { Tymex.clearCache(); state.status = null; render(); });
   window.addEventListener("hashchange", () => { if (!document.body.classList.contains("logged-out")) render(); });
-  Tymex.auth.onChange((session) => { if (started) enter(session); });
+  // Không gọi Supabase ngay trong callback này (sẽ kẹt khóa đăng nhập → trang treo ở "Đang tải"); chỉ phản ứng khi thật sự đăng nhập/đăng xuất.
+  Tymex.auth.onChange((session, event) => {
+    if (!started || event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") return;
+    const loggedIn = !document.body.classList.contains("logged-out");
+    if (!!session === loggedIn) return;
+    setTimeout(() => enter(session), 0);
+  });
   Tymex.auth.session().then((session) => { started = true; return enter(session); });
 }
 init();
