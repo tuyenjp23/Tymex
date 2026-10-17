@@ -315,7 +315,7 @@ function availabilityBlock(a) {
     const names = { home: `${m.home_name} thắng`, draw: "Hòa", away: `${m.away_name} thắng` };
     return `<div class="t-scroll"><table class="t"><thead><tr><th>Kết quả</th><th class="r">Dự đoán đã lưu</th><th class="r">Điều chỉnh (tham khảo)</th></tr></thead><tbody>${["home", "draw", "away"].map((x) =>
       `<tr><td>${esc(names[x])}</td><td class="r num">${pct(v.adjusted.before[x] * 100, 0)}%</td><td class="r num">${pct(v.adjusted.after[x] * 100, 0)}%</td></tr>`).join("")}</tbody></table></div>
-      <div class="notice warn" style="margin-top:.8rem">${esc(v.note)}</div>` : "";
+      <div class="notice warn" style="margin-top:.8rem">${esc(v.note)}</div>`;
   })() : "";
   return `<section class="block"><h2>Vắng mặt / chấn thương</h2>
     <p class="block-sub">Nguồn: API-Football. Cập nhật lúc ${esc(fmtStamp(v.updated_at))} (${esc(tzLabel())}). Tin có thể chưa đầy đủ; đội hình xuất phát chỉ có sát giờ đá.</p>

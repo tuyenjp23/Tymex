@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0e1626">
   <meta name="robots" content="noindex, nofollow">
   <title>Football Analytics cá nhân</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20261017a">
 </head>
 <body>
   <header class="topbar">
@@ -33,9 +33,22 @@
   <div id="toasts" role="status" aria-live="polite"></div>
 
   <noscript><p class="pad">Trang này cần bật JavaScript để hoạt động.</p></noscript>
+  <script>
+    /* Chẩn đoán: nếu sau 8 giây ứng dụng chưa khởi động, hiện nguyên nhân thay vì "Đang tải…" mãi. */
+    (function () {
+      var errs = [];
+      window.addEventListener("error", function (e) { errs.push((e.filename || "").split("/").pop().split("?")[0] + ":" + (e.lineno || "?") + " " + (e.message || "lỗi script")); });
+      setTimeout(function () {
+        if (window.__tymexStarted) return;
+        var el = document.getElementById("app");
+        var why = errs.length ? errs.join(" | ") : (window.supabase ? "không có lỗi script nhưng app.js chưa chạy" : "không tải được thư viện Supabase (cdn.jsdelivr.net bị chặn hoặc mạng lỗi)");
+        el.innerHTML = '<div class="notice error"><b>Ứng dụng chưa khởi động được.</b><br>' + why.replace(/</g, "&lt;") + '<br>Thử Ctrl+F5, hoặc mở bằng cửa sổ ẩn danh.</div>';
+      }, 8000);
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-  <script src="/config.js"></script>
-  <script src="/data.js"></script>
-  <script src="/app.js"></script>
+  <script src="/config.js?v=20261017a"></script>
+  <script src="/data.js?v=20261017a"></script>
+  <script src="/app.js?v=20261017a"></script>
 </body>
 </html>

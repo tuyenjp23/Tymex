@@ -5,3 +5,9 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 /config.js
   Cache-Control: no-cache
+/app.js
+  Cache-Control: no-cache
+/data.js
+  Cache-Control: no-cache
+/styles.css
+  Cache-Control: no-cache
