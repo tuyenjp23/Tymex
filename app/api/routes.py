@@ -192,6 +192,40 @@ def prediction_summary(request: Request, kind: str = Query("live", pattern="^(li
     return c(request).predictions.summary(kind)
 
 
+# ---------------------------------------------------------------------- dự đoán vô địch
+_OUTRIGHTS_MARKET_CACHE: dict = {"fetched_at": None, "by_code": None}
+
+
+@router.get("/outrights")
+def outrights(request: Request, n_sims: int = Query(1500, ge=100, le=10000)):
+    """Dự đoán đội vô địch từng giải: kèo outright của thị trường (The Odds API, chỉ khi máy này có
+    THE_ODDS_API_KEY; làm mới tối đa mỗi 36 giờ nhờ bộ nhớ đệm trong tiến trình) đặt cạnh mô phỏng
+    Monte Carlo phần còn lại của mùa giải bằng chính mô hình Poisson/Dixon-Coles (tính tại chỗ).
+    Cùng dạng dữ liệu với kv 'outrights' của bản đám mây. Không có khóa/thiếu dữ liệu => từng phần
+    trả available=False kèm lý do, không bịa số."""
+    from ..prediction import outrights as _o   # noqa: PLC0415
+    now = utcnow()
+    market_by_code, market_fetched_at = _OUTRIGHTS_MARKET_CACHE["by_code"], _OUTRIGHTS_MARKET_CACHE["fetched_at"]
+    key = (os.environ.get("THE_ODDS_API_KEY") or "").strip()
+    if key and _o.market_fetch_due({"fetched_at": market_fetched_at} if market_fetched_at else None, now):
+        try:
+            from ..odds.the_odds_api import TheOddsApi   # noqa: PLC0415
+            api = TheOddsApi(key, max_calls_per_run=10, min_remaining=_o.MARKET_MIN_REMAINING)
+            fresh, _meta = _o.fetch_market_outrights(api, log=lambda _msg: None)
+            if any(m.get("available") for m in fresh.values()):
+                market_by_code, market_fetched_at = fresh, to_iso(now)
+                _OUTRIGHTS_MARKET_CACHE.update({"by_code": fresh, "fetched_at": market_fetched_at})
+        except Exception:   # noqa: BLE001 - phần thị trường lỗi thì phần mô hình vẫn phải trả được
+            pass
+    if not key:
+        market_by_code = {code: {"available": False, "source": _o.MARKET_SOURCE,
+                                 "reason": "Máy này chưa cấu hình THE_ODDS_API_KEY nên chưa có tỉ lệ thị trường."}
+                          for code in _o.MARKET_LEAGUE_CODES}
+    return _o.build_outrights_payload(c(request).repo, market_by_code=market_by_code or {},
+                                       market_fetched_at=market_fetched_at, now=now,
+                                       n_sims=n_sims, log=lambda _msg: None)
+
+
 def _estimate_match_minute(match: dict) -> float:
     """ƯỚC TÍNH phút thi đấu từ giờ bóng lăn, vì nguồn football-data.org không cung cấp phút thi đấu.
 

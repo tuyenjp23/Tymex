@@ -100,8 +100,11 @@ def build_standings_payload(repo, league_id: int) -> dict | None:
             "updated_at": rows[0]["updated_at"] if rows else None}
 
 
-def publish(container, client, now=None, *, run_backtest: bool = True) -> dict:
-    """Đẩy ảnh chụp (snapshot) dữ liệu hiện tại lên Supabase. Trả về số lượng bản ghi theo bảng."""
+def publish(container, client, now=None, *, run_backtest: bool = True, outrights: dict | None = None) -> dict:
+    """Đẩy ảnh chụp (snapshot) dữ liệu hiện tại lên Supabase. Trả về số lượng bản ghi theo bảng.
+
+    outrights: payload "Dự đoán vô địch" dựng sẵn (app/prediction/outrights) — chỉ ghi khi được truyền vào;
+    truyền None nghĩa là giữ nguyên payload cũ trên Supabase (bước dựng bị lỗi thì không xóa dữ liệu tốt)."""
     repo, analysis, predictions = container.repo, container.analysis, container.predictions
     now_dt = now or utcnow()
     stamp = to_iso(now_dt)
@@ -159,5 +162,7 @@ def publish(container, client, now=None, *, run_backtest: bool = True) -> dict:
         kv.append(_kv(f"predictions:{kind}", {"predictions": rows, "count": len(rows)}, stamp))
     kv.append(_kv("status", {"last_sync": repo.last_sync_overall(), "counts": repo.counts(), "published_at": stamp,
                              "is_test_data": any(l["provider"] == "fixture" for l in leagues)}, stamp))
+    if outrights is not None:
+        kv.append(_kv("outrights", outrights, stamp))
     stats["kv"] = client.upsert("kv", kv, "key", batch=10)
     return stats

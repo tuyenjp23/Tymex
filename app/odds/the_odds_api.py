@@ -29,6 +29,7 @@ class TheOddsApi:
         self.api_key = (api_key or "").strip()
         self._client = client
         self.max_calls_per_run, self.min_remaining = max_calls_per_run, min_remaining
+        self._outright_calls = 0
 
     def fetch(self, code: str, start, end) -> tuple[list[dict], dict]:
         """Giao diện chung của mọi nguồn tỷ lệ cược: trả về (sự kiện chuẩn hóa, {'remaining', 'calls'})."""
@@ -48,13 +49,13 @@ class TheOddsApi:
     def is_configured(self) -> bool:
         return bool(self.api_key)
 
-    def fetch_h2h(self, sport_key: str) -> tuple[list[dict], dict]:
-        """Trả về (danh sách sự kiện, {'remaining': int|None, 'used': int|None})."""
+    def _request(self, path: str, params: dict, label: str):
+        """GET một endpoint của The Odds API; trả (dữ liệu JSON, {'remaining', 'used'}).
+        Mọi lỗi đều thành OddsApiError với thông báo KHÔNG chứa khóa API (URL/params không lọt vào thông báo)."""
         import httpx
         client = self._client or httpx.Client(timeout=30)
         try:
-            r = client.get(f"{BASE_URL}/sports/{sport_key}/odds",
-                           params={"apiKey": self.api_key, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"})
+            r = client.get(f"{BASE_URL}{path}", params={"apiKey": self.api_key, **params})
         except httpx.HTTPError as exc:   # không đưa exc vào thông báo: URL của nó chứa khóa API
             raise OddsApiError(f"Không kết nối được The Odds API ({type(exc).__name__}).", "network") from None
         info = {"remaining": _int(r.headers.get("x-requests-remaining")), "used": _int(r.headers.get("x-requests-used"))}
@@ -63,13 +64,42 @@ class TheOddsApi:
         if r.status_code == 429:
             raise OddsApiError("The Odds API báo hết hạn mức (429).", "quota")
         if r.status_code in (404, 422):
-            raise OddsApiError(f"Giải '{sport_key}' không có trên The Odds API ({r.status_code}).", "unknown_sport")
+            raise OddsApiError(f"{label} không có trên The Odds API ({r.status_code}).", "unknown_sport")
         if r.status_code != 200:
             raise OddsApiError(f"The Odds API trả về lỗi {r.status_code}.", "http")
         try:
-            data = r.json()
+            return r.json(), info
         except ValueError:
             raise OddsApiError("The Odds API trả về dữ liệu không đọc được.", "bad_json") from None
+
+    def fetch_h2h(self, sport_key: str) -> tuple[list[dict], dict]:
+        """Trả về (danh sách sự kiện, {'remaining': int|None, 'used': int|None})."""
+        data, info = self._request(f"/sports/{sport_key}/odds",
+                                   {"regions": "eu", "markets": "h2h", "oddsFormat": "decimal"},
+                                   f"Giải '{sport_key}'")
+        return (data if isinstance(data, list) else []), info
+
+    def list_outright_sports(self) -> list[dict]:
+        """Danh sách môn có kèo outright (futures) — endpoint /sports MIỄN PHÍ, không tốn credit.
+        Chỉ giữ các môn bóng đá (group 'Soccer'); trả [{'key', 'title'}]."""
+        data, _info = self._request("/sports/", {"outrights": "true"}, "Danh sách môn outright")
+        out = []
+        for s in data if isinstance(data, list) else []:
+            if str(s.get("group") or "").lower() != "soccer":
+                continue
+            if s.get("key") and s.get("title"):
+                out.append({"key": s["key"], "title": s["title"]})
+        return out
+
+    def fetch_outrights(self, sport_key: str) -> tuple[list[dict], dict]:
+        """Kèo outright (vd vô địch giải) của một môn. Có ngân sách gọi riêng cho outright
+        (max_calls_per_run của instance này) để không ăn vào phần kèo từng trận của runner."""
+        if self._outright_calls >= self.max_calls_per_run:
+            raise OddsApiError(f"Đã dùng hết ngân sách {self.max_calls_per_run} lần gọi outright trong lần chạy này.", "budget")
+        self._outright_calls += 1
+        data, info = self._request(f"/sports/{sport_key}/odds",
+                                   {"regions": "eu", "markets": "outrights", "oddsFormat": "decimal"},
+                                   f"Môn '{sport_key}'")
         return (data if isinstance(data, list) else []), info
 
 

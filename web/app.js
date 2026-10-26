@@ -152,7 +152,7 @@ const canonicalHash = () => {
 };
 const ROUTES = {
   "": ["dashboard", pageDashboard], schedule: ["schedule", pageSchedule], match: ["match", pageMatch], live: ["live", pageLive],
-  standings: ["standings", pageStandings], teams: ["teams", pageTeams], predictions: ["predictions", pageHistory], settings: ["settings", pageSettings],
+  standings: ["standings", pageStandings], outrights: ["outrights", pageOutrights], teams: ["teams", pageTeams], predictions: ["predictions", pageHistory], settings: ["settings", pageSettings],
 };
 async function render() {
   if (state.liveTimer) { clearInterval(state.liveTimer); state.liveTimer = null; }
@@ -1154,6 +1154,58 @@ async function pageHistory(_, params) {
 }
 const groupTable = (rows, key) => `<table class="t"><thead><tr><th>${key === "league" ? "Giải" : "Tháng"}</th><th class="r">Trận</th><th class="r">Đúng</th><th class="r">Brier</th></tr></thead><tbody>${rows.map((r) =>
   `<tr><td>${esc(r[key])}</td><td class="r num">${r.n}</td><td class="r num">${pct(r.accuracy, 0)}%</td><td class="r num">${num(r.brier, 3)}</td></tr>`).join("")}</tbody></table>`;
+
+/* ---------------------------------------------------------------- Dự đoán vô địch */
+const OUTRIGHTS_SOURCE_NOTE = "Tỉ lệ vô địch: tổng hợp từ The Odds API (nhiều nhà cái quốc tế), xác suất đã chuẩn hóa loại trừ lãi nhà cái. Cột mô hình: mô phỏng Monte Carlo phần còn lại của mùa giải bằng mô hình Poisson/Dixon-Coles của Tymex.";
+async function pageOutrights() {
+  app.innerHTML = `<div class="page-head"><h1>Dự đoán vô địch</h1></div>`;
+  const holder = document.createElement("div");
+  holder.innerHTML = loading();
+  app.appendChild(holder);
+  const data = await window.TymexData.kv("outrights");
+  if (!data || !Array.isArray(data.leagues) || !data.leagues.length) {
+    holder.innerHTML = emptyBox("Dữ liệu dự đoán vô địch sẽ có sau lần đồng bộ kế tiếp.");
+    return;
+  }
+  holder.innerHTML = `<p class="muted small">${esc(OUTRIGHTS_SOURCE_NOTE)}<br>`
+    + `Tỉ lệ thị trường lấy lúc: ${esc(fmtStamp(data.fetched_at))} · Mô phỏng chạy lúc: ${esc(fmtStamp(data.simulated_at))} (${esc(tzLabel())}).</p>`;
+  data.leagues.forEach((lg) => holder.insertAdjacentHTML("beforeend", outrightCard(lg)));
+  holder.insertAdjacentHTML("beforeend", `<p class="vd-note">${esc(TymexLive.VERDICT_DISCLAIMER)}</p>`);
+}
+function outrightCard(lg) {
+  const market = lg.market || {}, model = lg.model || {};
+  const mOut = market.available ? (market.outcomes || []) : [];
+  const modOut = model.available ? (model.outcomes || []) : [];
+  const mByTeam = new Map(mOut.map((o) => [o.team, o]));
+  const modByTeam = new Map(modOut.map((o) => [o.team, o]));
+  // Hợp nhất: top 6 theo xác suất thị trường, cộng thêm mọi đội thuộc top 3 của mô hình mà thị trường chưa có.
+  // Không có dữ liệu thị trường thì lấy top 6 của mô hình.
+  const teams = (mOut.length ? mOut.slice(0, 6) : modOut.slice(0, 6)).map((o) => o.team);
+  modOut.slice(0, 3).forEach((o) => { if (!teams.includes(o.team)) teams.push(o.team); });
+  const marketTop = mOut.length ? mOut[0].team : null;
+  const modelTop = modOut.length ? modOut[0].team : null;
+  const bar = (p, cls) => (p == null ? `<span class="muted">—</span>`
+    : `<div class="sbar" role="img" aria-label="${pct(p * 100, 1)}%"><div class="${cls}" style="width:${Math.max(1.5, p * 100)}%"></div></div><span class="num small">${pct(p * 100, 1)}%</span>`);
+  const rows = teams.map((team) => {
+    const m = mByTeam.get(team), md = modByTeam.get(team);
+    const chips = [];
+    if (team === marketTop) chips.push(`<span class="chip">Ứng viên số 1 (thị trường)</span>`);
+    if (team === modelTop) chips.push(`<span class="chip">Mô hình Tymex đánh giá cao nhất</span>`);
+    return `<tr><td><b>${esc(team)}</b>${chips.length ? `<div style="margin-top:.25rem">${chips.join(" ")}</div>` : ""}</td>`
+      + `<td class="r num">${m ? Number(m.odds).toLocaleString("vi-VN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}</td>`
+      + `<td>${bar(m ? m.prob : null, "sb-h")}</td><td>${bar(md ? md.prob : null, "sb-a")}</td></tr>`;
+  }).join("");
+  let notes = "";
+  if (!market.available) notes += `<p class="block-sub">Tỉ lệ thị trường: ${esc(market.reason || "chưa có dữ liệu.")}</p>`;
+  else notes += `<p class="block-sub">Thị trường: ${esc(market.bookmakers ?? "?")} nhà cái · lấy lúc ${esc(fmtStamp(market.fetched_at))}.</p>`;
+  if (!model.available) notes += `<p class="block-sub">Mô hình Tymex: ${esc(model.note || model.reason || "chưa đủ dữ liệu để mô phỏng.")}</p>`;
+  else if (model.note) notes += `<p class="block-sub">Mô hình Tymex: ${esc(model.note)}</p>`;
+  else if (model.n_sims) notes += `<p class="block-sub">Mô hình Tymex: ${Number(model.n_sims).toLocaleString("vi-VN")} lần mô phỏng${model.fixtures_remaining != null ? ` · còn ${model.fixtures_remaining} trận chưa đá` : ""}.</p>`;
+  return `<section class="block"><h2>${esc(lg.name)}</h2>${notes}`
+    + (rows ? `<div class="t-scroll"><table class="t"><thead><tr><th>Đội</th><th class="r">Tỉ lệ vô địch</th><th>Xác suất thị trường</th><th>Xác suất mô hình Tymex</th></tr></thead><tbody>${rows}</tbody></table></div>`
+            : emptyBox("Chưa có ứng viên nào cho giải này."))
+    + `</section>`;
+}
 
 /* ---------------------------------------------------------------- Tài khoản */
 async function pageSettings() {

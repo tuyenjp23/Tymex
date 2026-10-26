@@ -141,7 +141,7 @@ function setParams(patch) {
 }
 const ROUTES = {
   "": ["dashboard", pageDashboard], schedule: ["schedule", pageSchedule], match: ["match", pageMatch],
-  standings: ["standings", pageStandings], teams: ["teams", pageTeams], predictions: ["predictions", pageHistory], settings: ["settings", pageSettings],
+  standings: ["standings", pageStandings], outrights: ["outrights", pageOutrights], teams: ["teams", pageTeams], predictions: ["predictions", pageHistory], settings: ["settings", pageSettings],
 };
 async function render() {
   const { parts, params } = parseHash();
@@ -487,6 +487,44 @@ async function pageStandings(_, params) {
       `<tr><td class="num">${r.position}</td><td><a class="tname" href="#/schedule?team=${r.team_id}">${crest(r.crest_url, r.team_name)}<span>${esc(r.team_name)}</span></a></td><td class="r num">${r.played}</td><td class="r num">${r.won}</td><td class="r num">${r.draw}</td><td class="r num">${r.lost}</td><td class="r num">${r.goals_for}</td><td class="r num">${r.goals_against}</td><td class="r num">${r.goal_diff > 0 ? "+" : ""}${r.goal_diff}</td><td class="r num"><b>${r.points}</b></td></tr>`).join("")}</tbody></table></div></section>`);
   });
 }
+/* ---------------------------------------------------------------- Dự đoán vô địch */
+async function pageOutrights() {
+  const data = await api("/outrights");
+  app.innerHTML = `<div class="page-head"><h1>Dự đoán vô địch</h1></div>
+    <p class="muted small">Tỉ lệ vô địch: tổng hợp từ The Odds API (nhiều nhà cái quốc tế), xác suất đã chuẩn hóa loại trừ lãi nhà cái. Cột mô hình: mô phỏng Monte Carlo phần còn lại của mùa giải bằng mô hình Poisson/Dixon-Coles của Tymex.<br>
+    Tỉ lệ thị trường lấy lúc: ${esc(fmtStamp(data.fetched_at))} · Mô phỏng chạy lúc: ${esc(fmtStamp(data.simulated_at))}.</p>`;
+  if (!data.leagues || !data.leagues.length) { app.insertAdjacentHTML("beforeend", emptyBox("Chưa có dữ liệu dự đoán vô địch.")); return; }
+  data.leagues.forEach((lg) => {
+    const market = lg.market || {}, model = lg.model || {};
+    const mOut = market.available ? (market.outcomes || []) : [];
+    const modOut = model.available ? (model.outcomes || []) : [];
+    const mByTeam = new Map(mOut.map((o) => [o.team, o]));
+    const modByTeam = new Map(modOut.map((o) => [o.team, o]));
+    const teams = (mOut.length ? mOut.slice(0, 6) : modOut.slice(0, 6)).map((o) => o.team);
+    modOut.slice(0, 3).forEach((o) => { if (!teams.includes(o.team)) teams.push(o.team); });
+    const marketTop = mOut.length ? mOut[0].team : null;
+    const modelTop = modOut.length ? modOut[0].team : null;
+    let notes = "";
+    if (!market.available) notes += `<p class="muted small">Tỉ lệ thị trường: ${esc(market.reason || "chưa có dữ liệu.")}</p>`;
+    if (!model.available) notes += `<p class="muted small">Mô hình Tymex: ${esc(model.note || model.reason || "chưa đủ dữ liệu để mô phỏng.")}</p>`;
+    const rows = teams.map((team) => {
+      const m = mByTeam.get(team), md = modByTeam.get(team);
+      const chips = [];
+      if (team === marketTop) chips.push(`<span class="chip">Ứng viên số 1 (thị trường)</span>`);
+      if (team === modelTop) chips.push(`<span class="chip">Mô hình Tymex đánh giá cao nhất</span>`);
+      return `<tr><td><b>${esc(team)}</b>${chips.length ? `<div style="margin-top:.25rem">${chips.join(" ")}</div>` : ""}</td>
+        <td class="r num">${m ? Number(m.odds).toFixed(2) : "—"}</td>
+        <td class="r num">${m ? pct(m.prob * 100, 1) + "%" : "—"}</td>
+        <td class="r num">${md ? pct(md.prob * 100, 1) + "%" : "—"}</td></tr>`;
+    }).join("");
+    app.insertAdjacentHTML("beforeend", `<section class="block"><h2>${esc(lg.name)}</h2>${notes}`
+      + (rows ? `<div class="t-scroll"><table class="t"><thead><tr><th>Đội</th><th class="r">Tỉ lệ vô địch</th><th class="r">% thị trường</th><th class="r">% mô hình Tymex</th></tr></thead><tbody>${rows}</tbody></table></div>`
+              : emptyBox("Chưa có ứng viên nào cho giải này."))
+      + `</section>`);
+  });
+  app.insertAdjacentHTML("beforeend", `<p class="vd-note">Nhận định tham khảo từ mô hình thống kê và tỉ lệ thị trường — không phải lời khuyên cá cược.</p>`);
+}
+
 async function pageTeams(_, params) {
   const leagues = state.status.leagues;
   const f = { league: params.league || "", q: params.q || "" };

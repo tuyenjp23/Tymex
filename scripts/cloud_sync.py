@@ -9,6 +9,8 @@ Tỷ lệ cược trận sắp đá, chuỗi nguồn dự phòng (đặt khóa n
   THE_ODDS_API_KEY (500 credit/tháng; ODDS_MAX_CALLS=3, ODDS_MIN_REMAINING=40) rồi API_FOOTBALL_KEY (100 request/ngày;
   API_FOOTBALL_MAX_CALLS=12, API_FOOTBALL_MIN_REMAINING=15). Đổi thứ tự bằng ODDS_PROVIDER_ORDER="the-odds-api,api-football".
   ODDS_LEAGUES (mặc định PL,PD,BL1,SA,FL1), ODDS_HOURS_AHEAD (30), ODDS_NEAR_INTERVAL_MIN (120), ODDS_FAR_INTERVAL_MIN (1440). Lỗi phần này cũng KHÔNG làm hỏng lần chạy.
+Dự đoán vô địch (kv 'outrights', chỉ ở lần chạy đầy đủ): kèo outright của The Odds API chỉ lấy mới khi dữ liệu cũ quá 36 giờ,
+  tối đa ODDS_OUTRIGHTS_MAX_CALLS (mặc định 10) lần gọi và dừng khi hạn mức còn < 60; mô phỏng Monte Carlo chạy lại mỗi lần. Lỗi cũng KHÔNG làm hỏng lần chạy.
 Vắng mặt/chấn thương (cần API_FOOTBALL_KEY): ABSENCES_ENABLED (1; đặt 0 để tắt), ABSENCES_MAX_CALLS (6 request/lần chạy, 1 request/giải/ngày có trận),
   ABSENCES_INTERVAL_MIN (360). AVAILABILITY_ADJUST=0 tắt xác suất điều chỉnh tham khảo trên trang trận.
 File SQLite làm việc được lưu trong Supabase Storage (bucket riêng tư) để giữ lịch sử dự đoán giữa các lần chạy.
@@ -147,7 +149,44 @@ def main() -> int:
     container.predictions.generate_upcoming()
     container.predictions.resolve_results()
 
-    stats = publish(container, client)
+    # --- Dự đoán vô địch (kv 'outrights'): kèo thị trường The Odds API + mô phỏng Monte Carlo của mô hình.
+    # Kèo chỉ lấy mới khi payload cũ đã quá 36 giờ (kèo vô địch biến động chậm, phải giữ hạn mức 500 credit/tháng
+    # cho kèo từng trận); mô phỏng chạy lại mỗi lần đồng bộ đầy đủ. Mọi lỗi ở bước này đều được cách ly:
+    # giữ nguyên payload cũ trên Supabase và KHÔNG làm hỏng lần đồng bộ chính.
+    outrights_payload = None
+    if not args.odds_only:
+        try:
+            from datetime import datetime, timezone   # noqa: PLC0415
+            from app.prediction import outrights as _outrights   # noqa: PLC0415
+            sync_now = datetime.now(timezone.utc)
+            prev_row = None
+            try:
+                prev_row = client.get_kv("outrights")
+            except Exception:   # noqa: BLE001 - đọc payload cũ lỗi thì coi như chưa có, vẫn dựng phần mô hình
+                prev_row = None
+            prev_payload = (prev_row or {}).get("payload") if isinstance(prev_row, dict) else None
+            market_by_code, market_fetched_at = {}, (prev_payload or {}).get("fetched_at")
+            odds_key = (env("THE_ODDS_API_KEY") or "").strip()
+            if odds_key and _outrights.market_fetch_due(prev_payload, sync_now):
+                from app.odds.the_odds_api import TheOddsApi   # noqa: PLC0415
+                odds_api = TheOddsApi(odds_key, max_calls_per_run=int(env("ODDS_OUTRIGHTS_MAX_CALLS") or 10),
+                                      min_remaining=_outrights.MARKET_MIN_REMAINING)
+                market_by_code, market_meta = _outrights.fetch_market_outrights(odds_api)
+                if any(m.get("available") for m in market_by_code.values()):
+                    from app.utils import to_iso   # noqa: PLC0415
+                    market_fetched_at = to_iso(sync_now)
+                print(f"Kèo vô địch: {market_meta['calls']} lần gọi The Odds API, còn lại {market_meta['remaining']}")
+            elif prev_payload:
+                market_by_code = _outrights.market_from_payload(prev_payload)
+            outrights_payload = _outrights.build_outrights_payload(
+                container.repo, market_by_code=market_by_code, market_fetched_at=market_fetched_at, now=sync_now)
+            print("Dự đoán vô địch: đã dựng payload cho",
+                  ", ".join(lg["code"] for lg in outrights_payload["leagues"]))
+        except Exception as exc:   # noqa: BLE001  - chỉ bổ sung, không được làm hỏng đồng bộ chính
+            print("Cảnh báo: dựng dự đoán vô địch thất bại, giữ payload cũ:", type(exc).__name__)
+            outrights_payload = None
+
+    stats = publish(container, client, outrights=outrights_payload)
     print("Đã đẩy lên Supabase:", stats)
 
     # SQLite ở chế độ WAL: gộp về file chính trước khi tải lên

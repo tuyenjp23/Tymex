@@ -27,6 +27,7 @@ Mở cửa sổ lệnh trong thư mục dự án và chạy `.venv\Scripts\pytho
 | Bảng xếp hạng | Theo giải |
 | Đội bóng | Danh sách, bấm để xem lịch của đội |
 | Lịch sử dự đoán | Dự đoán đã lưu trước trận + Brier, log loss, độ chính xác, sai số bàn thắng theo giải/tháng |
+| Vô địch | Dự đoán đội vô địch từng giải: tỉ lệ thị trường (The Odds API) đặt cạnh mô phỏng Monte Carlo của mô hình Tymex |
 | Cài đặt | Khóa API, chọn giải, đồng bộ, nhật ký |
 
 Múi giờ mặc định **Asia/Tokyo**, đổi ngay trên thanh trên cùng; mọi giờ đều ghi rõ múi giờ.
@@ -93,6 +94,14 @@ Với trận **đang đá**, nhận định cập nhật theo trạng thái tr�
 - **Biểu đồ kiểm soát bóng ghi ở máy chủ**: ESPN chỉ cung cấp % kiểm soát bóng lũy kế tại thời điểm gọi, không có lịch sử theo phút. `scripts/sample_live.py` ghi mẫu vào Supabase `kv` dưới khóa `possession:<espn_event_id>`; workflow `sample-live.yml` khởi động ở phút thứ 7 mỗi giờ và chạy vòng lặp **52 phút**, chu kỳ mục tiêu **90 giây**, nên mẫu thường cách nhau **~1–2 phút** (tối đa 130 mẫu/trận; mẫu cách nhau dưới 45 giây bị coi là trùng). Repo public nên số phút Actions không phải ràng buộc chính. Vẫn phải nói rõ giới hạn: **mẫu có thể khuyết vài phút quanh thời điểm chuyển ca mỗi giờ; GitHub có thể trễ lịch vài phút**. Trang trận vẽ thanh chia đôi % hiện tại/chung cuộc và biểu đồ bậc thang từ các mẫu trung tâm, chấm tròn là mẫu thật — không lấp số liệu cho các phút không có mẫu. Mẫu đầu tiên của một trận chỉ tồn tại sau khi workflow chạy trong lúc trận đó đang đá.
 - **Chống trùng cặp đấu ở 3 lớp**: (1) `web/live.js` khử trùng ESPN ↔ TheSportsDB bằng tên đội đã chuẩn hóa (bỏ dấu/hậu tố như FC/CF/Club), cho phép một phía khớp tiền tố/chuỗi con dài ≥ 6 trong khi phía còn lại khớp đúng, đồng thời giờ đá phải lệch ≤ 3 giờ (thiếu giờ thì cùng ngày); bản ESPN được giữ và chỉ nhận trường TheSportsDB còn thiếu. (2) `web/data.js` gộp phòng thủ các bản ghi Supabase cùng `league_id` + ngày + cặp đội đúng chiều, ưu tiên bản có tỷ số, trạng thái tiến triển hơn, rồi id nhỏ nhất. (3) `app/cloud/export.py` gộp ngay trước khi upsert bằng khóa ngày + cặp đội **không phụ thuộc league_id**, giữ `league_id` của bản ghi thắng và in `đã gộp N trận trùng`. Cả ba lớp đều **không** gộp trận đảo chiều sân (lượt về) hay cùng cặp ở ngày khác.
 
+## Bổ sung (2026-10-26): Dự đoán vô địch — thị trường đối chiếu mô hình (`app/prediction/outrights.py`)
+
+Trang **Vô địch** (bản web `#/outrights`, bản máy tính có trang tương tự + endpoint `GET /api/outrights`) hiển thị cho từng giải hai đánh giá độc lập đặt cạnh nhau:
+
+- **Thị trường**: kèo vô địch (outright) từ **The Odds API** — dịch vụ tổng hợp tỉ lệ của nhiều nhà cái quốc tế. Mỗi đội lấy **trung vị** tỉ lệ thập phân giữa các nhà cái, quy đổi 1/tỉ lệ rồi **chuẩn hóa tổng = 100%** (đã loại phần lãi nhà cái). Môn outright được phát hiện qua endpoint `/sports?outrights=true` (miễn phí) và ánh xạ về giải theo tiêu đề; bao phủ 5 giải VĐQG đang đồng bộ + UEFA Champions League. Để giữ hạn mức 500 credit/tháng cho kèo từng trận: chỉ lấy mới khi dữ liệu cũ hơn **36 giờ**, tối đa **10 lần gọi/lần chạy** (`ODDS_OUTRIGHTS_MAX_CALLS`), và **dừng ngay khi hạn mức còn dưới 60**. Tên đội thị trường được ghép về tên trong CSDL khi khớp chắc chắn (chuẩn hóa bỏ hậu tố FC/CF...), không khớp thì giữ tên gốc của thị trường.
+- **Mô hình Tymex**: **mô phỏng Monte Carlo** phần còn lại của mùa giải — bảng điểm hiện tại của mùa đang đá cộng với từng trận chưa đá được rút tỉ số từ chính ma trận Poisson/Dixon-Coles của mô hình (CDF tính một lần cho mỗi trận, mỗi lần mô phỏng rút bằng một lần bisect). Mặc định **3.000 lần mô phỏng** (2.000 nếu còn trên 300 trận), cùng seed cho kết quả như nhau; đo thực tế một giải 20 đội giữa mùa (~190 trận còn lại) mất chưa tới 1 giây. Champions League là giải cúp nên **không** mô phỏng — chỉ có cột thị trường, ghi rõ lý do.
+- Dữ liệu bản web nằm ở Supabase `kv` khóa `outrights`, dựng trong `scripts/cloud_sync.py` (chỉ ở lần chạy đầy đủ) và đẩy qua `publish(..., outrights=...)`; bước này **cách ly lỗi hoàn toàn** — lỗi thì giữ payload cũ, không hỏng đồng bộ chính. Giải nào thiếu kèo hoặc thiếu dữ liệu mô phỏng thì hiện trạng thái trống trung thực kèm lý do, không bịa số. Đây là nhận định tham khảo — **không phải lời khuyên cá cược**.
+
 ## 6. AI viết bài (tùy chọn)
 
 Để trống thì mọi thứ vẫn chạy. Nếu thêm `ANTHROPIC_API_KEY` vào `.env`, trang trận sẽ có nút **Viết bài bằng AI**: hệ thống gửi cho AI một bản JSON số liệu đã tính, yêu cầu viết bài tiếng Việt và cấm thêm thông tin ngoài bản đó. Bài được lưu kèm thời điểm và mã dữ liệu; khi dữ liệu đổi sẽ báo "bài đã cũ" để tạo lại. Chỉ tốn phí mỗi lần bạn bấm. Tên mô hình đặt bằng `AI_MODEL` trong `.env`.
@@ -105,7 +114,7 @@ app/
   database/         schema.py, db.py, repository.py (toàn bộ SQL ở đây)
   services/         đồng bộ, phân tích trận, dự đoán + chấm điểm + backtest
   analytics/        stats.py (phong độ, sân nhà/khách, đối đầu), conclusions.py
-  prediction/       poisson.py (mô hình Poisson + Dixon-Coles), live.py (dự đoán trực tiếp + mô phỏng), markets.py (Tài/Xỉu bàn thắng + bản nhận định), corners.py (mô hình Tài/Xỉu phạt góc), evaluation.py (Brier, log loss...)
+  prediction/       poisson.py (mô hình Poisson + Dixon-Coles), live.py (dự đoán trực tiếp + mô phỏng), markets.py (Tài/Xỉu bàn thắng + bản nhận định), corners.py (mô hình Tài/Xỉu phạt góc), outrights.py (dự đoán vô địch: kèo outright The Odds API + mô phỏng Monte Carlo), evaluation.py (Brier, log loss...)
   ai_analysis/      writer.py (module AI tùy chọn)
   api/              routes.py (endpoint FastAPI)
   main.py, config.py
