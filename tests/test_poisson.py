@@ -3,8 +3,8 @@ import random
 
 import pytest
 
-from app.prediction.poisson import (ModelParams, outcome_probabilities, poisson_pmf, predict, round_to_100,
-                                    score_matrix)
+from app.prediction.poisson import (MODEL_VERSION, ModelParams, dixon_coles_tau, outcome_probabilities,
+                                    poisson_pmf, predict, round_to_100, score_matrix)
 from tests.conftest import mk
 
 
@@ -121,3 +121,55 @@ def test_insufficient_team_data_returns_no_prediction():
 
 def test_no_data_at_all():
     assert predict([], 1, 2, KICK, "A", "B")["available"] is False
+
+
+# ---------------------------------------------------------------------- Dixon-Coles
+def test_dixon_coles_tau_formula_and_untouched_cells():
+    rho = -0.08
+    assert dixon_coles_tau(0, 0, 1.5, 1.1, rho) == pytest.approx(1 - 1.5 * 1.1 * rho)
+    assert dixon_coles_tau(1, 0, 1.5, 1.1, rho) == pytest.approx(1 + 1.1 * rho)
+    assert dixon_coles_tau(0, 1, 1.5, 1.1, rho) == pytest.approx(1 + 1.5 * rho)
+    assert dixon_coles_tau(1, 1, 1.5, 1.1, rho) == pytest.approx(1 - rho)
+    assert dixon_coles_tau(2, 1, 1.5, 1.1, rho) == 1.0
+    assert dixon_coles_tau(0, 2, 1.5, 1.1, rho) == 1.0
+
+
+def test_dixon_coles_negative_rho_shifts_low_score_probabilities():
+    """rho âm: P(0-0) và P(1-1) tăng, P(1-0) và P(0-1) giảm so với Poisson thuần ở cùng λ."""
+    plain = score_matrix(1.5, 1.1, 10)                    # rho mặc định 0 = Poisson thuần (tương thích ngược)
+    dc = score_matrix(1.5, 1.1, 10, rho=-0.08)
+    assert dc[0][0] > plain[0][0]
+    assert dc[1][1] > plain[1][1]
+    assert dc[1][0] < plain[1][0]
+    assert dc[0][1] < plain[0][1]
+    # các ô ngoài nhóm 4 ô thấp chỉ đổi do chuẩn hóa lại, theo cùng một tỷ lệ
+    ratio = dc[4][3] / plain[4][3]
+    assert dc[2][0] == pytest.approx(plain[2][0] * ratio)
+
+
+def test_dixon_coles_matrix_still_sums_to_one_and_outcomes_too():
+    for lam_h, lam_a, rho in [(1.5, 1.1, -0.08), (0.6, 0.5, -0.13), (3.2, 2.8, -0.03), (1.3, 1.3, 0.05)]:
+        m = score_matrix(lam_h, lam_a, 10, rho=rho)
+        assert sum(sum(r) for r in m) == pytest.approx(1.0)
+        h, d, a = outcome_probabilities(m)
+        assert h + d + a == pytest.approx(1.0)
+        assert all(v >= 0 for row in m for v in row)
+
+
+def test_dixon_coles_zero_rho_matches_plain_poisson_exactly():
+    a = score_matrix(1.7, 0.8, 10)
+    b = score_matrix(1.7, 0.8, 10, rho=0.0)
+    assert a == b
+
+
+def test_predict_uses_dixon_coles_and_reports_it():
+    out = predict(league(), 1, 6, KICK, "Mạnh", "Yếu", ModelParams(lookback_days=500))
+    assert out["available"]
+    assert out["dixon_coles_rho"] == pytest.approx(-0.08)
+    assert out["model_version"] == MODEL_VERSION and "dc" in MODEL_VERSION
+    pc = out["percent"]
+    assert round(pc["home"] + pc["draw"] + pc["away"], 6) == 100.0
+    assert out["p_home"] + out["p_draw"] + out["p_away"] == pytest.approx(1.0)
+    # ma trận trả ra bị cắt còn 6x6 và làm tròn nên tổng nhỏ hơn 1 (đội mạnh có λ cao, đuôi >5 bàn đáng kể)
+    assert 0.8 < sum(sum(r) for r in out["matrix"]) <= 1.0
+    assert out["top_scores"][0]["prob"] >= out["top_scores"][1]["prob"]

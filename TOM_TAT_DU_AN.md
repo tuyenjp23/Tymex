@@ -51,6 +51,7 @@ Quy tắc bắt buộc:
 - Nguồn CSV: viết `scripts/import_csv.py` (cần file CSV mẫu để ánh xạ cột), đặt file vào `data_import/`, workflow tự nhập. Cần bảng quy đổi tên đội, ghi kèm tên nguồn, nhập lặp không tạo trùng.
 - Không khuyến nghị cào (scraping) web; ưu tiên API chính thức hoặc file công khai. Kiểm tra điều khoản sử dụng của từng nguồn.
 - Hoãn: hiệu chỉnh Dixon-Coles cho mô hình Poisson cho đến khi có dữ liệu thật để backtest.
+- (2026-10-26) Đã triển khai hiệu chỉnh Dixon-Coles (ρ = −0,08, `MODEL_VERSION = "poisson-v2-dc"`, `score_matrix(..., rho=...)`, `predict()` dùng sẵn) vì kho dữ liệu thật đã đủ lớn (~21 nghìn trận nhập lịch sử) để việc hiệu chỉnh có ý nghĩa. Cùng đợt: thêm `app/prediction/live.py` (dự đoán trực tiếp `predict_live` + mô phỏng `simulate_match`), endpoint `GET /api/matches/{id}/live-prediction`, và trang **Trực tiếp** ở bản web lấy tỷ số/thống kê trực tiếp phía trình duyệt từ ESPN (nhiều giải châu Âu/Á/Mỹ, Cúp C1 ưu tiên) + quét toàn cầu TheSportsDB (phủ K League, V.League), kèm chế độ mô phỏng có gắn nhãn rõ. Dự đoán trước trận vẫn chỉ chạy trên các giải đã đồng bộ football-data.org/Supabase như cũ.
 
 ## 8. Ghi chú khi làm việc với Tuyen
 - Trả lời tiếng Việt, hướng dẫn từng bước đơn giản (Tuyen không rành Git/CLI, dùng GitHub Desktop và giao diện web).

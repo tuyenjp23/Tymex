@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from ..ai_analysis.writer import AIError
 from ..config import set_env_value
 from ..data_providers.base import ProviderError
-from ..utils import day_range_utc, to_iso, utcnow
+from ..prediction.live import predict_live
+from ..utils import day_range_utc, parse_iso, to_iso, utcnow
 
 router = APIRouter(prefix="/api")
 
@@ -189,6 +190,55 @@ def predictions(request: Request, kind: str = Query("live", pattern="^(live|back
 @router.get("/predictions/summary")
 def prediction_summary(request: Request, kind: str = Query("live", pattern="^(live|backtest)$")):
     return c(request).predictions.summary(kind)
+
+
+def _estimate_match_minute(match: dict) -> float:
+    """ƯỚC TÍNH phút thi đấu từ giờ bóng lăn, vì nguồn football-data.org không cung cấp phút thi đấu.
+
+    Lấy số phút đồng hồ đã trôi qua kể từ giờ bóng lăn, trừ 15 phút nghỉ giữa hiệp khi đã qua phút 60
+    của đồng hồ (hiệp 1 ~45+ phút + nghỉ 15 phút), kẹp trong [0, 95]. Trận đang PAUSED coi như phút 45.
+    Đây là ước tính thô — giao diện phải ghi rõ điều này; truyền ?minute= để dùng phút chính xác."""
+    if match["status"] == "PAUSED":
+        return 45.0
+    elapsed = (utcnow() - parse_iso(match["utc_date"])).total_seconds() / 60.0
+    minute = elapsed - 15.0 if elapsed > 60 else elapsed
+    return max(0.0, min(minute, 95.0))
+
+
+@router.get("/matches/{match_id}/live-prediction")
+def match_live_prediction(request: Request, match_id: int, minute: float | None = Query(None, ge=0, le=130)):
+    """Dự đoán trực tiếp (kiểu FotMob) cho trận đang đá, từ λ của dự đoán TRƯỚC TRẬN đã lưu.
+
+    Không có dự đoán đã lưu, trận không đang đá, hoặc chưa có tỷ số trực tiếp => {"available": False, "reason": ...},
+    tuyệt đối không tự bịa λ hay tỷ số."""
+    ct = c(request)
+    m = ct.repo.get_match(match_id)
+    if not m:
+        err(404, "not_found", "Không tìm thấy trận đấu.")
+    base = {"match": public_match(m)}
+    if m["status"] not in LIVE:
+        return {**base, "available": False,
+                "reason": f"Trận không đang diễn ra (trạng thái: {m['status']}). Dự đoán trực tiếp chỉ tính khi trận đang đá."}
+    if m["home_score"] is None or m["away_score"] is None:
+        return {**base, "available": False,
+                "reason": "Nguồn dữ liệu hiện tại chưa cung cấp tỷ số trực tiếp của trận này."}
+    pred = ct.repo.latest_prediction(match_id, "live", before=m["utc_date"])
+    if not pred:
+        return {**base, "available": False,
+                "reason": "Chưa có dự đoán trước trận đã lưu cho trận này nên không có λ trước trận để tính dự đoán trực tiếp. Hệ thống không tự bịa λ."}
+    estimated = minute is None
+    used_minute = _estimate_match_minute(m) if estimated else float(minute)
+    out = predict_live(pred["lambda_home"], pred["lambda_away"], used_minute, m["home_score"], m["away_score"])
+    out.update(base)
+    out["minute_estimated"] = estimated
+    out["pre_match_prediction"] = {"id": pred["id"], "created_at": pred["created_at"],
+                                   "lambda_home": pred["lambda_home"], "lambda_away": pred["lambda_away"],
+                                   "model_version": pred["model_version"]}
+    if estimated:
+        out["notes"] = out["notes"] + ["Phút thi đấu là ƯỚC TÍNH từ giờ bóng lăn (đã trừ ~15 phút nghỉ giữa hiệp) "
+                                        "vì nguồn dữ liệu không cung cấp phút thi đấu; truyền tham số ?minute= để dùng phút chính xác."]
+    out["notes"] = out["notes"] + ["Nguồn dữ liệu hiện tại không cung cấp thẻ đỏ trực tiếp nên mô hình tính với 0 thẻ đỏ."]
+    return out
 
 
 class BacktestBody(BaseModel):

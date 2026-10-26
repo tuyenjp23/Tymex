@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="không có Node.js")
-@pytest.mark.parametrize("rel", ["web/app.js", "web/data.js", "web/config.js", "frontend/app.js"])
+@pytest.mark.parametrize("rel", ["web/app.js", "web/data.js", "web/config.js", "web/live.js", "frontend/app.js"])
 def test_js_files_parse(rel):
     f = ROOT / rel
     if not f.exists():

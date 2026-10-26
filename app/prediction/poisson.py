@@ -1,4 +1,4 @@
-"""Mô hình dự đoán thống kê: sức mạnh tấn công/phòng ngự + phân phối Poisson.
+"""Mô hình dự đoán thống kê: sức mạnh tấn công/phòng ngự + phân phối Poisson, hiệu chỉnh Dixon-Coles.
 
 Các bước:
  1. Từ các trận đã kết thúc của giải (trước giờ bóng lăn, trong `lookback_days`), tính trung bình bàn thắng
@@ -8,10 +8,17 @@ Các bước:
  3. Bàn thắng kỳ vọng:
        λ_nhà  = lh × Tấn công_nhà(sân nhà) × Phòng ngự_khách(sân khách)
        λ_khách = la × Tấn công_khách(sân khách) × Phòng ngự_nhà(sân nhà)
- 4. Ma trận tỷ số P(i, j) = Poisson(i; λ_nhà) × Poisson(j; λ_khách), chuẩn hóa lại sau khi cắt ở `max_goals`.
+ 4. Ma trận tỷ số P(i, j) = Poisson(i; λ_nhà) × Poisson(j; λ_khách), sau đó hiệu chỉnh Dixon-Coles cho 4 ô
+    tỷ số thấp (0-0, 1-0, 0-1, 1-1) bằng hệ số tau và tham số tương quan `dixon_coles_rho` (mặc định -0,08):
+    Poisson thuần độc lập thường đánh giá THẤP các trận hòa ít bàn và đánh giá CAO 1-0/0-1 so với thực tế;
+    rho âm sửa đúng lệch đó. Ma trận được chuẩn hóa lại sau khi cắt ở `max_goals`.
  5. Xác suất thắng/hòa/thua là tổng các ô tương ứng; làm tròn bằng phương pháp phần dư lớn nhất để tổng = 100%.
 
-Mô hình giả định hai đội ghi bàn độc lập và KHÔNG biết chấn thương, đội hình, động lực, thời tiết, lịch dồn.
+`score_matrix(..., rho=0)` vẫn cho ma trận Poisson thuần như trước (tương thích ngược); `predict()` luôn
+dùng ma trận đã hiệu chỉnh Dixon-Coles với `params.dixon_coles_rho`.
+
+Mô hình giả định hai đội ghi bàn gần như độc lập (ngoại trừ hiệu chỉnh Dixon-Coles ở tỷ số thấp) và KHÔNG
+biết chấn thương, đội hình, động lực, thời tiết, lịch dồn.
 """
 from __future__ import annotations
 
@@ -22,7 +29,7 @@ from datetime import timedelta
 from ..analytics.stats import is_finished
 from ..utils import parse_iso, to_iso
 
-MODEL_VERSION = "poisson-v1"
+MODEL_VERSION = "poisson-v2-dc"
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,9 @@ class ModelParams:
     max_goals: int = 10
     min_lambda: float = 0.15
     max_lambda: float = 5.0
+    # Tương quan Dixon-Coles cho các tỷ số thấp: giá trị âm (văn liệu thường dùng khoảng -0,03 đến -0,15
+    # tùy giải) làm tăng xác suất 0-0 và 1-1, giảm 1-0 và 0-1 so với Poisson độc lập thuần.
+    dixon_coles_rho: float = -0.08
 
 
 # ---------------------------------------------------------------------- phần toán thuần
@@ -42,11 +52,35 @@ def poisson_pmf(k: int, lam: float) -> float:
     return math.exp(-lam + k * math.log(lam) - math.lgamma(k + 1)) if lam > 0 else (1.0 if k == 0 else 0.0)
 
 
-def score_matrix(lam_home: float, lam_away: float, max_goals: int = 10) -> list[list[float]]:
-    """Ma trận (max_goals+1)² đã chuẩn hóa để tổng = 1. Hàng = bàn của chủ nhà, cột = bàn của khách."""
+def dixon_coles_tau(home_goals: int, away_goals: int, lam_home: float, lam_away: float, rho: float) -> float:
+    """Hệ số hiệu chỉnh Dixon-Coles cho 4 ô tỷ số thấp; mọi ô khác = 1.
+
+    Với rho âm (mặc định của mô hình): tau(0,0) và tau(1,1) > 1 (tăng xác suất hòa ít bàn),
+    tau(1,0) và tau(0,1) < 1 (giảm xác suất thắng tối thiểu) so với Poisson độc lập thuần."""
+    if home_goals == 0 and away_goals == 0:
+        return 1.0 - lam_home * lam_away * rho
+    if home_goals == 1 and away_goals == 0:
+        return 1.0 + lam_away * rho
+    if home_goals == 0 and away_goals == 1:
+        return 1.0 + lam_home * rho
+    if home_goals == 1 and away_goals == 1:
+        return 1.0 - rho
+    return 1.0
+
+
+def score_matrix(lam_home: float, lam_away: float, max_goals: int = 10, rho: float = 0.0) -> list[list[float]]:
+    """Ma trận (max_goals+1)² đã chuẩn hóa để tổng = 1. Hàng = bàn của chủ nhà, cột = bàn của khách.
+
+    rho = 0 (mặc định) cho ma trận Poisson thuần như trước đây; rho khác 0 áp hiệu chỉnh Dixon-Coles
+    cho các ô 0-0, 1-0, 0-1, 1-1 trước khi chuẩn hóa."""
     ph = [poisson_pmf(i, lam_home) for i in range(max_goals + 1)]
     pa = [poisson_pmf(j, lam_away) for j in range(max_goals + 1)]
     m = [[a * b for b in pa] for a in ph]
+    if rho:
+        for i in (0, 1):
+            for j in (0, 1):
+                if i <= max_goals and j <= max_goals:
+                    m[i][j] *= max(dixon_coles_tau(i, j, lam_home, lam_away, rho), 0.0)
     total = sum(sum(r) for r in m)
     return [[v / total for v in r] for r in m]
 
@@ -192,7 +226,7 @@ def predict(league_matches: list[dict], home_id: int, away_id: int, kickoff: str
         return {"available": False, "reason": reason, "model_version": MODEL_VERSION}
 
     lam_h, lam_a = est["lambda_home"], est["lambda_away"]
-    matrix = score_matrix(lam_h, lam_a, params.max_goals)
+    matrix = score_matrix(lam_h, lam_a, params.max_goals, rho=params.dixon_coles_rho)
     p_h, p_d, p_a = outcome_probabilities(matrix)
     pct = round_to_100([p_h, p_d, p_a])
     cells = sorted(((matrix[i][j], i, j) for i in range(len(matrix)) for j in range(len(matrix))), reverse=True)
@@ -202,6 +236,7 @@ def predict(league_matches: list[dict], home_id: int, away_id: int, kickoff: str
     return {
         "available": True, "model_version": MODEL_VERSION,
         "lambda_home": round(lam_h, 3), "lambda_away": round(lam_a, 3),
+        "dixon_coles_rho": params.dixon_coles_rho,
         "p_home": p_h, "p_draw": p_d, "p_away": p_a,
         "percent": {"home": pct[0], "draw": pct[1], "away": pct[2]},
         "predicted_score": {"home": top[0]["home"], "away": top[0]["away"], "prob": top[0]["prob"]},

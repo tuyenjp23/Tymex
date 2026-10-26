@@ -394,6 +394,23 @@ async function articleBlock(id) {
   draw(article);
   return holder;
 }
+function livePredictionBlock(lp, m) {
+  if (!lp.available) {
+    return `<section class="block"><h2>Dự đoán trực tiếp</h2><div class="notice">${esc(lp.reason)}</div></section>`;
+  }
+  const pc = lp.percent;
+  return `<section class="block"><h2>Dự đoán trực tiếp (đang đá)</h2>
+    <p class="block-sub">Từ λ trước trận đã lưu (λ ${num(lp.pre_match_prediction.lambda_home)} - ${num(lp.pre_match_prediction.lambda_away)}), tỷ số hiện tại ${m.home_score} - ${m.away_score}, phút ${lp.minute}${lp.minute_estimated ? " (ƯỚC TÍNH từ giờ bóng lăn, đã trừ ~15 phút nghỉ giữa hiệp — nguồn dữ liệu không cung cấp phút thi đấu)" : ""}. Cập nhật khi tải lại trang.</p>
+    <div class="pstrip" role="img" aria-label="Xác suất trực tiếp: chủ nhà ${pc.home}%, hòa ${pc.draw}%, khách ${pc.away}%">
+      <div class="h" style="width:${pc.home}%">${pct(pc.home)}%</div><div class="d" style="width:${pc.draw}%">${pct(pc.draw)}%</div><div class="a" style="width:${pc.away}%">${pct(pc.away)}%</div></div>
+    <div class="plabels"><span>${esc(m.home_name)} thắng</span><span>Hòa</span><span>${esc(m.away_name)} thắng</span></div>
+    <div class="facts">
+      <div class="fact-box"><div class="v">${lp.predicted_final_score.home} - ${lp.predicted_final_score.away}</div><div class="l">tỷ số chung cuộc khả thi nhất (${pct(lp.predicted_final_score.prob * 100)}%)</div></div>
+      <div class="fact-box"><div class="v">${num(lp.expected_final.home)} - ${num(lp.expected_final.away)}</div><div class="l">tỷ số chung cuộc kỳ vọng</div></div>
+      <div class="fact-box"><div class="v">${pct(lp.next_goal.home * 100, 0)}% / ${pct(lp.next_goal.away * 100, 0)}%</div><div class="l">bàn thắng tiếp theo (nhà / khách); không thêm bàn ${pct(lp.next_goal.none * 100, 0)}%</div></div></div>
+    <p>${lp.top_final_scores.map((t) => `<span class="num">${t.home}-${t.away}</span> (${pct(t.prob * 100)}%)`).join(" &nbsp; ")}</p>
+    <p class="small muted" style="margin-top:.6rem">${esc((lp.notes || []).join(" "))}</p></section>`;
+}
 async function pageMatch(parts) {
   const id = Number(parts[1]);
   if (!Number.isInteger(id)) throw new Error("Đường dẫn trận đấu không hợp lệ.");
@@ -407,6 +424,12 @@ async function pageMatch(parts) {
         <div class="versus"><div class="vteam home">${crest(m.home_crest, m.home_name)}<h2>${esc(m.home_name)}</h2><span class="role">Chủ nhà (sân nhà)</span></div>
         <div class="vscore">${has ? `${m.home_score} - ${m.away_score}` : "vs"}<small>${esc(STATUS_LABEL[m.status] || m.status)}${done && m.home_ht !== null ? ` · H1 ${m.home_ht}-${m.away_ht}` : ""}</small></div>
         <div class="vteam away">${crest(m.away_crest, m.away_name)}<h2>${esc(m.away_name)}</h2><span class="role">Đội khách (sân khách)</span></div></div></section>`;
+    if (m.status === "IN_PLAY" || m.status === "PAUSED") {
+      try {
+        const lp = await api(`/matches/${id}/live-prediction`);
+        app.insertAdjacentHTML("beforeend", livePredictionBlock(lp, m));
+      } catch { /* không có panel trực tiếp cũng không sao: các khối khác vẫn hiện */ }
+    }
     app.insertAdjacentHTML("beforeend", predictionBlock(a) + marketBlock(a) + availabilityBlock(a) + formBlock(a, a.form_n) + venueBlock(a) + h2hBlock(a));
     app.insertAdjacentHTML("beforeend", `<section class="block"><h2>Thống kê nâng cao</h2><div class="notice">${esc(a.advanced.available ? "Có dữ liệu nâng cao." : a.advanced.reason)}</div></section>`);
     app.insertAdjacentHTML("beforeend", conclusionBlock(a));

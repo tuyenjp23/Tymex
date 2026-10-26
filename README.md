@@ -43,13 +43,31 @@ Cache: dữ liệu lưu trong SQLite (`data/football.db`). Không gọi lại AP
 
 ## 5. Dự đoán hoạt động thế nào
 
-Mô hình Poisson (`app/prediction/poisson.py`): từ các trận đã kết thúc của giải trong 400 ngày trước trận (trọng số giảm dần theo thời gian), tính tấn công/phòng ngự **riêng sân nhà và sân khách** của mỗi đội, co về mức trung bình giải để tránh mẫu nhỏ, suy ra bàn thắng kỳ vọng λ của hai đội, dựng ma trận tỷ số Poisson rồi cộng thành xác suất thắng/hòa/thua (làm tròn sao cho tổng đúng 100%).
+Mô hình Poisson + Dixon-Coles (`app/prediction/poisson.py`, phiên bản `poisson-v2-dc`): từ các trận đã kết thúc của giải trong 400 ngày trước trận (trọng số giảm dần theo thời gian), tính tấn công/phòng ngự **riêng sân nhà và sân khách** của mỗi đội, co về mức trung bình giải để tránh mẫu nhỏ, suy ra bàn thắng kỳ vọng λ của hai đội, dựng ma trận tỷ số Poisson, **hiệu chỉnh Dixon-Coles** (ρ = −0,08) cho 4 ô tỷ số thấp 0-0, 1-0, 0-1, 1-1 — Poisson độc lập thuần vốn đánh giá thấp các trận hòa ít bàn và đánh giá cao thắng tối thiểu — rồi cộng thành xác suất thắng/hòa/thua (làm tròn sao cho tổng đúng 100%).
 
 - Chỉ dùng trận **đã kết thúc trước giờ bóng lăn**; kết quả tương lai không bao giờ lọt vào.
 - Thiếu dữ liệu (dưới 6 trận mỗi đội hoặc dưới 40 trận của giải) → hiện cảnh báo, **không tạo dự đoán**.
 - Dự đoán được **lưu trước trận** (kèm thời điểm) khi bạn mở trang trận hoặc sau mỗi lần đồng bộ; không bao giờ ghi đè hay xóa. Khi có kết quả thật, hệ thống chấm điểm tự động. Trang Lịch sử dự đoán hiển thị cả dự đoán sai.
 - "Kiểm tra lại trên trận cũ" (backtest) chạy mô hình trên các trận đã đá chỉ bằng dữ liệu trước trận đó, để đo chất lượng ngay khi chưa có nhiều dự đoán thật. Kết quả này tách riêng, không trộn với dự đoán thật.
 - Mô hình **không biết** chấn thương, đội hình, động lực, thời tiết. Hãy coi đây là công cụ tham khảo, không phải lời khuyên cá cược.
+
+## Bổ sung (2026-10-26): dự đoán trực tiếp, thống kê trực tiếp và mô phỏng
+
+**Dự đoán trực tiếp trong trận (kiểu FotMob)** — `app/prediction/live.py` + endpoint `GET /api/matches/{id}/live-prediction` (bản máy tính) và trang **Trực tiếp** (bản web):
+
+- Cách tính: lấy λ của dự đoán **trước trận đã lưu**, chỉ mô hình hóa phần thời gian còn lại (trận coi như 95 phút hiệu dụng gồm bù giờ), nhân hệ số trạng thái (đội đang thua tấn công mạnh hơn ×1,12/bàn, đội đang thắng giảm nhịp ×0,90/bàn, tối đa 2 bàn) và hệ số thẻ đỏ (đội bị thẻ ×0,72/thẻ, đối thủ ×1,10/thẻ), cộng phân phối bàn thắng còn lại (có hiệu chỉnh Dixon-Coles) vào tỷ số hiện tại. Kết quả: xác suất thắng/hòa/thua trực tiếp, các tỷ số **chung cuộc** khả thi nhất, tỷ số kỳ vọng chung cuộc, xác suất bàn thắng tiếp theo.
+- Không có dự đoán trước trận đã lưu, trận không đang đá, hoặc chưa có tỷ số trực tiếp → trả `{"available": false, "reason": ...}`, **không bao giờ tự bịa λ**.
+- football-data.org không cung cấp phút thi đấu và thẻ đỏ trực tiếp: phút trên bản máy tính là **ước tính từ giờ bóng lăn** (trừ ~15 phút nghỉ giữa hiệp, có ghi rõ trong phản hồi; truyền `?minute=` để dùng phút chính xác) và thẻ đỏ tính bằng 0.
+- Bản web (trang Trực tiếp) lấy tỷ số/phút **thật, trực tiếp từ trình duyệt**: ESPN cho các giải lớn ở châu Âu (Champions League/Cúp C1, Europa League, Conference League, 5 giải VĐQG lớn, các cúp quốc gia...), châu Á (AFC Champions League Elite/Two, J.League, Saudi Pro League, Trung Quốc, Thái Lan, Indonesia, Malaysia, Ấn Độ, Úc...) và châu Mỹ (Libertadores, Sudamericana, MLS, Liga MX, Brazil, Argentina...) — nhóm ưu tiên làm mới mỗi 60 giây, các giải còn lại tối đa 4 phút/lần — cộng một lượt **quét toàn cầu của TheSportsDB** để phủ các giải ESPN không có (K League 1 của Hàn Quốc, V.League 1 của Việt Nam...) và dự phòng khi ESPN sập. Mỗi thẻ trận ghi rõ nguồn của trận đó.
+- **Thống kê trực tiếp**: mở một trận ESPN sẽ tải thống kê chi tiết của chính trận đó (kiểm soát bóng, cú sút, sút trúng đích, phạt góc, việt vị, phạm lỗi, cứu thua, thẻ, chuyền bóng... — chỉ hiện những gì ESPN thật sự trả về cho trận đó), dòng sự kiện bàn thắng/thẻ/thay người, và biểu đồ **"Biến động xác suất thắng"** do mô hình trực tiếp tính lại tại các thời điểm ghi bàn đã biết (đây là đầu ra của mô hình, không phải dữ liệu thế trận thật). Số "xG ước tính từ cú sút" nếu có là ước tính thô của Tymex (sút trúng đích × 0,32 + sút còn lại × 0,03), luôn ghi rõ không phải xG chính thức.
+- **Phạm vi dự đoán trước trận không đổi**: dự đoán Tymex vẫn chỉ có cho các giải đã đồng bộ qua football-data.org/Supabase (gói miễn phí giới hạn số giải). Các giải chỉ có ở lớp trực tiếp mà chưa có dự đoán Tymex sẽ dùng λ trung bình giải và **ghi rõ nhãn "ước tính theo trung bình giải"** trên từng trận.
+
+**Chế độ mô phỏng trực tiếp** — nút **▶ Mô phỏng** trên trang Trực tiếp (và hàm `simulate_match` trong `app/prediction/live.py`):
+
+- Mô phỏng từng phút một trận (từ đầu, hoặc tiếp từ trạng thái hiện tại của trận đang đá) bằng chính λ và mô hình trực tiếp ở trên: đồng hồ, tỷ số, thanh xác suất và biểu đồ biến động cập nhật theo tốc độ bạn chọn (0,25–1 giây/phút), kèm dòng sự kiện mô phỏng (bàn thắng, cơ hội nguy hiểm).
+- Đây là diễn biến **GIẢ LẬP bằng mô hình, không phải trận thật** — banner "MÔ PHỎNG" luôn hiện trên đầu panel. Đừng dùng kết quả mô phỏng làm nhận định về trận thật.
+
+**Giới hạn trung thực**: mô hình trực tiếp không có dữ liệu cú sút/xG/thế trận theo phút nên chỉ phản ứng theo tỷ số, thời gian và thẻ đỏ; xác suất là ước lượng thống kê, không phải cam kết kết quả. Coi mọi con số là công cụ tham khảo, không phải lời khuyên cá cược.
 
 ## 6. AI viết bài (tùy chọn)
 
@@ -63,7 +81,7 @@ app/
   database/         schema.py, db.py, repository.py (toàn bộ SQL ở đây)
   services/         đồng bộ, phân tích trận, dự đoán + chấm điểm + backtest
   analytics/        stats.py (phong độ, sân nhà/khách, đối đầu), conclusions.py
-  prediction/       poisson.py (mô hình), evaluation.py (Brier, log loss...)
+  prediction/       poisson.py (mô hình Poisson + Dixon-Coles), live.py (dự đoán trực tiếp + mô phỏng), evaluation.py (Brier, log loss...)
   ai_analysis/      writer.py (module AI tùy chọn)
   api/              routes.py (endpoint FastAPI)
   main.py, config.py
