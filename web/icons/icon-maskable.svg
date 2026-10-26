@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Tymex">
+  <!-- Bản maskable: nền tràn viền (hệ điều hành tự cắt theo hình tròn/chữ nhật bo góc),
+       quả bóng đường kính 300px nằm trọn trong vùng an toàn 80% ở giữa (đường kính 409,6px). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2a47"/>
+      <stop offset="1" stop-color="#0e1626"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="150" fill="#f4b942"/>
+  <g stroke="#0e1626" stroke-width="13" stroke-linecap="round">
+    <line x1="256.0" y1="205.0" x2="256.0" y2="106.0"/>
+    <line x1="304.5" y1="240.2" x2="398.7" y2="209.6"/>
+    <line x1="286.0" y1="297.3" x2="344.2" y2="377.4"/>
+    <line x1="226.0" y1="297.3" x2="167.8" y2="377.4"/>
+    <line x1="207.5" y1="240.2" x2="113.3" y2="209.6"/>
+  </g>
+  <polygon points="256.0,205.0 304.5,240.2 286.0,297.3 226.0,297.3 207.5,240.2" fill="#0e1626"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#0e1626" stroke-width="8"/>
+</svg>

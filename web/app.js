@@ -1207,6 +1207,33 @@ function outrightCard(lg) {
     + `</section>`;
 }
 
+/* ---------------------------------------------------------------- PWA: cài đặt ứng dụng
+   Chrome/Android bắn sự kiện beforeinstallprompt một lần — giữ lại để nút ở trang Cài đặt dùng.
+   Không tự hiện banner/popup: người dùng tự bấm nút trong Cài đặt (hoặc menu ⋮ của Chrome). */
+let deferredInstallPrompt = null;
+const isStandaloneApp = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  const btn = $("#install-app"), hint = $("#install-hint");
+  if (btn) btn.hidden = false;
+  if (hint) hint.hidden = true;
+});
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  const sec = $("#install-section");
+  if (sec) sec.innerHTML = `<h2>Ứng dụng</h2><p>Bạn đang dùng Tymex ở chế độ ứng dụng.</p>`;
+});
+function installSectionHtml() {
+  if (isStandaloneApp()) {
+    return `<section class="block" id="install-section"><h2>Ứng dụng</h2><p>Bạn đang dùng Tymex ở chế độ ứng dụng.</p></section>`;
+  }
+  return `<section class="block" id="install-section"><h2>Ứng dụng</h2>
+    <p class="small muted">Cài Tymex lên màn hình chính để mở nhanh, toàn màn hình như một ứng dụng.</p>
+    <p><button class="btn btn-accent" id="install-app" type="button" ${deferredInstallPrompt ? "" : "hidden"}>📲 Cài đặt ứng dụng</button></p>
+    <p class="small muted" id="install-hint" ${deferredInstallPrompt ? "hidden" : ""}>Chưa thấy nút cài đặt? Mở menu ⋮ của Chrome → “Cài đặt ứng dụng” hoặc “Thêm vào màn hình chính”.</p></section>`;
+}
+
 /* ---------------------------------------------------------------- Tài khoản */
 async function pageSettings() {
   const sess = await Tymex.auth.session();
@@ -1214,11 +1241,22 @@ async function pageSettings() {
   app.innerHTML = `<div class="page-head"><h1>Tài khoản</h1></div>
   <section class="block"><h2>Đăng nhập</h2><p>Đang đăng nhập: <b>${esc(sess?.user?.email || "")}</b></p>
     <p><button class="btn" id="logout">Đăng xuất</button></p></section>
+  ${installSectionHtml()}
   <section class="block"><h2>Dữ liệu</h2>
     <p>Đồng bộ từ football-data.org lần gần nhất: <b>${esc(fmtStamp(st.last_sync))}</b>. Dữ liệu đưa lên web lúc: <b>${esc(fmtStamp(st.published_at))}</b>.</p>
     <p class="small muted">Dữ liệu được GitHub Actions cập nhật tự động theo lịch (không phải trực tiếp từng phút nên tỷ số trận đang đá có thể chậm). Khóa API bóng đá nằm trong GitHub Secrets, không bao giờ đến trình duyệt. Muốn cập nhật ngay: GitHub → Actions → "Đồng bộ dữ liệu" → Run workflow.</p>
     <p class="small muted">Số liệu hiện có: ${st.counts.matches} trận, ${st.counts.teams} đội, ${st.counts.predictions} dự đoán đã lưu.</p></section>`;
   $("#logout").addEventListener("click", () => Tymex.auth.signOut());
+  const installBtn = $("#install-app");
+  if (installBtn) installBtn.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) return;
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null; // sự kiện chỉ dùng được một lần
+    promptEvent.prompt();
+    const choice = await promptEvent.userChoice;
+    installBtn.hidden = true;
+    if (choice.outcome !== "accepted") { const hint = $("#install-hint"); if (hint) hint.hidden = false; }
+  });
 }
 
 /* ---------------------------------------------------------------- Đăng nhập */

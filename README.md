@@ -102,6 +102,15 @@ Trang **Vô địch** (bản web `#/outrights`, bản máy tính có trang tươ
 - **Mô hình Tymex**: **mô phỏng Monte Carlo** phần còn lại của mùa giải — bảng điểm hiện tại của mùa đang đá cộng với từng trận chưa đá được rút tỉ số từ chính ma trận Poisson/Dixon-Coles của mô hình (CDF tính một lần cho mỗi trận, mỗi lần mô phỏng rút bằng một lần bisect). Mặc định **3.000 lần mô phỏng** (2.000 nếu còn trên 300 trận), cùng seed cho kết quả như nhau; đo thực tế một giải 20 đội giữa mùa (~190 trận còn lại) mất chưa tới 1 giây. Champions League là giải cúp nên **không** mô phỏng — chỉ có cột thị trường, ghi rõ lý do.
 - Dữ liệu bản web nằm ở Supabase `kv` khóa `outrights`, dựng trong `scripts/cloud_sync.py` (chỉ ở lần chạy đầy đủ) và đẩy qua `publish(..., outrights=...)`; bước này **cách ly lỗi hoàn toàn** — lỗi thì giữ payload cũ, không hỏng đồng bộ chính. Giải nào thiếu kèo hoặc thiếu dữ liệu mô phỏng thì hiện trạng thái trống trung thực kèm lý do, không bịa số. Đây là nhận định tham khảo — **không phải lời khuyên cá cược**.
 
+## Bổ sung (2026-10-26): Cài đặt như ứng dụng (PWA)
+
+Bản web là một **PWA** cài đặt được lên điện thoại: mở trang bằng Chrome (Android) → menu ⋮ → “Cài đặt ứng dụng”, hoặc vào trang **Cài đặt** trong Tymex và bấm **📲 Cài đặt ứng dụng**. Sau khi cài, Tymex có biểu tượng riêng trên màn hình chính (quả bóng vàng trên nền navy) và mở toàn màn hình như ứng dụng thường.
+
+- Khai báo cài đặt nằm ở `web/manifest.json`; biểu tượng ở `web/icons/` (SVG + PNG 192/512 + bản maskable).
+- `web/sw.js` là service worker đệm **vỏ ứng dụng** theo chiến lược thận trọng: mở trang luôn ưu tiên mạng (network-first) nên bản triển khai mới không bao giờ bị kẹt sau bộ nhớ đệm; js/css/biểu tượng dùng stale-while-revalidate; dữ liệu từ Supabase/ESPN/TheSportsDB **không** qua đệm — mất mạng thì trang vẫn mở được vỏ, còn dữ liệu hiện lỗi kết nối như bình thường (không giả dữ liệu ngoại tuyến).
+- **Nghĩa vụ khi phát hành**: hằng số `VERSION` trong `web/sw.js` phải luôn khớp hậu tố `?v=` trong `web/index.html` — tăng cái này thì tăng cả cái kia.
+- Lưu ý: các file PNG trong `web/icons/` là file nhị phân, **không** đẩy lên GitHub qua kênh text được — chúng nằm trong cây làm việc ở máy và cần được thêm bằng GitHub Desktop (file SVG vẫn đủ để cài đặt trong lúc chờ bổ sung PNG).
+
 ## 6. AI viết bài (tùy chọn)
 
 Để trống thì mọi thứ vẫn chạy. Nếu thêm `ANTHROPIC_API_KEY` vào `.env`, trang trận sẽ có nút **Viết bài bằng AI**: hệ thống gửi cho AI một bản JSON số liệu đã tính, yêu cầu viết bài tiếng Việt và cấm thêm thông tin ngoài bản đó. Bài được lưu kèm thời điểm và mã dữ liệu; khi dữ liệu đổi sẽ báo "bài đã cũ" để tạo lại. Chỉ tốn phí mỗi lần bạn bấm. Tên mô hình đặt bằng `AI_MODEL` trong `.env`.

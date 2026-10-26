@@ -6,7 +6,14 @@
   <meta name="theme-color" content="#0e1626">
   <meta name="robots" content="noindex, nofollow">
   <title>Tymex — Phân tích & dự đoán bóng đá</title>
-  <link rel="stylesheet" href="/styles.css?v=20261026e">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Tymex">
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/styles.css?v=20261026f">
 </head>
 <body>
   <header class="topbar">
@@ -49,9 +56,18 @@
     })();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-  <script src="/config.js?v=20261026e"></script>
-  <script src="/data.js?v=20261026e"></script>
-  <script src="/live.js?v=20261026e"></script>
-  <script src="/app.js?v=20261026e"></script>
+  <script src="/config.js?v=20261026f"></script>
+  <script src="/data.js?v=20261026f"></script>
+  <script src="/live.js?v=20261026f"></script>
+  <script src="/app.js?v=20261026f"></script>
+  <script>
+    /* PWA: đăng ký service worker (đệm vỏ ứng dụng để mở nhanh/ngoại tuyến).
+       Mọi lỗi đều bỏ qua lặng lẽ — trang hoạt động y hệt khi không có service worker. */
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("/sw.js").catch(function () { /* bỏ qua */ });
+      });
+    }
+  </script>
 </body>
 </html>
