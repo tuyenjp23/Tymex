@@ -70,18 +70,21 @@ const failure = (message, code = "error", status = 400) => Object.assign(new Err
 
 /* ---------------------------------------------------------------- khử trùng lịch thi đấu (phòng thủ)
    Pipeline vẫn là nơi sửa gốc; lớp này chặn các bản ghi trùng còn sót trong Supabase để MỌI trang dùng
-   getMatches đều không hiện một trận hai lần. Chỉ gộp khi cùng league_id, cùng ngày bắt đầu (phần ngày
-   của utc_date) và cùng cặp đội theo đúng chiều nhà/khách sau chuẩn hóa. KHÔNG gộp trận lượt về/đảo
-   chiều sân, cũng không gộp cùng cặp ở ngày khác — đó là các trận hợp lệ khác nhau. */
+   getMatches đều không hiện một trận hai lần. Gộp khi cùng ngày bắt đầu (phần ngày của utc_date) và
+   cùng cặp đội theo đúng chiều nhà/khách sau chuẩn hóa — KHÔNG đòi cùng league_id: dữ liệu nhập từ
+   nhiều nguồn tạo nhiều bản ghi giải trùng tên (trang lịch lại nhóm theo TÊN giải nên các bản ghi
+   khác league_id vẫn hiện cạnh nhau và trông như trùng tuyệt đối; ca thật: Estoril–Moreirense lặp 4
+   lần dưới một tiêu đề Primeira Liga, 2026-10-26). KHÔNG gộp trận lượt về/đảo chiều sân, cũng không
+   gộp cùng cặp ở ngày khác — đó là các trận hợp lệ khác nhau. */
 const MATCH_TEAM_AFFIXES = new Set(["fc", "cf", "sc", "afc", "club", "de", "ca", "cd", "ec", "ifk", "bk",
-  "ac", "as", "us", "ss", "sv", "fk", "sk", "if", "ff", "ik"]);
+  "ac", "as", "us", "ss", "sv", "fk", "sk", "if", "ff", "ik", "gd", "sd", "ud", "rc"]);
 function normalizeMatchTeamName(name) {
   return searchKey(name).replace(/[^a-z0-9]+/g, " ").split(" ")
     .filter((t) => t && !MATCH_TEAM_AFFIXES.has(t)).join(" ").trim();
 }
 function matchDedupeKey(m) {
-  if (!m || m.league_id === null || m.league_id === undefined || !m.utc_date || !m.home_name || !m.away_name) return null;
-  return `${m.league_id}|${String(m.utc_date).slice(0, 10)}|${normalizeMatchTeamName(m.home_name)}|${normalizeMatchTeamName(m.away_name)}`;
+  if (!m || !m.utc_date || !m.home_name || !m.away_name) return null;
+  return `${String(m.utc_date).slice(0, 10)}|${normalizeMatchTeamName(m.home_name)}|${normalizeMatchTeamName(m.away_name)}`;
 }
 const MATCH_STATUS_RANK = { FINISHED: 50, AWARDED: 40, PAUSED: 35, IN_PLAY: 30, TIMED: 20, SCHEDULED: 10 };
 function matchRecordScore(m) {
@@ -97,6 +100,18 @@ function isBetterMatchRecord(candidate, current) {
   if (a.status !== b.status) return a.status > b.status;
   return a.id < b.id;
 }
+/* Lượt 2: tên rút gọn ↔ tên đầy đủ (ví dụ "Estoril" ↔ "GD Estoril Praia") — tập token của một bên
+   chứa trọn bên kia ở CẢ hai phía và cùng ngày thì coi là một trận. Chặn các token phân biệt đội hình
+   B/trẻ/nữ để không gộp nhầm hai đội khác nhau thật (Porto ↔ Porto B...). */
+const MATCH_VARIANT_TOKENS = new Set(["b", "ii", "2", "u19", "u20", "u21", "u23", "women", "woman", "nu", "reserves", "reserve"]);
+const teamTokens = (name) => new Set(normalizeMatchTeamName(name).split(" ").filter(Boolean));
+const tokensSubsetVariant = (a, b) => {
+  if (!a.size || !b.size) return false;
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  for (const t of small) if (!big.has(t)) return false;
+  for (const t of big) if (!small.has(t) && MATCH_VARIANT_TOKENS.has(t)) return false;
+  return true;
+};
 function dedupeMatches(rows) {
   const out = [], indexByKey = new Map();
   let removed = 0;
@@ -108,10 +123,35 @@ function dedupeMatches(rows) {
     removed += 1;
     if (isBetterMatchRecord(m, out[idx])) out[idx] = m;
   });
+  // Lượt 2: gộp các cặp còn lại theo luật tên rút gọn/đầy đủ, chỉ trong cùng ngày.
+  const byDate = new Map();
+  out.forEach((m, i) => {
+    const d = m && m.utc_date ? String(m.utc_date).slice(0, 10) : null;
+    if (!d || !m.home_name || !m.away_name) return;
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(i);
+  });
+  const dropped = new Set();
+  byDate.forEach((idxs) => {
+    for (let a = 0; a < idxs.length; a++) {
+      if (dropped.has(idxs[a])) continue;
+      for (let b = a + 1; b < idxs.length; b++) {
+        if (dropped.has(idxs[b])) continue;
+        const m1 = out[idxs[a]], m2 = out[idxs[b]];
+        if (tokensSubsetVariant(teamTokens(m1.home_name), teamTokens(m2.home_name))
+          && tokensSubsetVariant(teamTokens(m1.away_name), teamTokens(m2.away_name))) {
+          removed += 1;
+          if (isBetterMatchRecord(m2, m1)) out[idxs[a]] = m2;
+          dropped.add(idxs[b]);
+        }
+      }
+    }
+  });
+  const result = out.filter((_, i) => !dropped.has(i));
   if (removed && typeof console !== "undefined" && console.debug) {
     console.debug(`[Tymex] Đã gộp ${removed} trận trùng trong danh sách lịch thi đấu.`);
   }
-  return out;
+  return result;
 }
 const kvCache = new Map();
 async function kv(key, ttlMs = 60000) {
