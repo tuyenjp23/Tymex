@@ -1,0 +1,40 @@
+# Ghi mẫu kiểm soát bóng (possession) của các trận ĐANG ĐÁ vào Supabase kv.
+# ESPN chỉ cho % kiểm soát bóng lũy kế tại thời điểm gọi nên Tymex phải tự ghi mẫu định kỳ ở máy chủ
+# thì trang Trực tiếp mới vẽ được biểu đồ theo thời gian mà không phụ thuộc ai đang mở trang.
+#
+# Nhịp ghi mẫu: workflow khởi động ở phút thứ 7 mỗi giờ, rồi script chạy vòng lặp 52 phút với chu kỳ
+# mục tiêu 90 giây — tức mẫu cách nhau khoảng 1–2 phút trong phần lớn thời gian. Repo này là public
+# nên số phút GitHub Actions không phải ràng buộc chính của thiết kế này.
+# Giới hạn phải nói rõ: quanh thời điểm chuyển ca mỗi giờ có thể khuyết vài phút (ca trước kết thúc,
+# ca sau chờ runner khởi động), và GitHub có thể trễ lịch vài phút khi hệ thống bận. Không lấp các
+# khoảng khuyết bằng số liệu suy diễn.
+name: Ghi mẫu trực tiếp (kiểm soát bóng)
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: tymex-sample-live
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Ghi mẫu kiểm soát bóng vào Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scripts/sample_live.py --loop-minutes 52 --interval-seconds 90

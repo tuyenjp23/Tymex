@@ -67,6 +67,52 @@ const localDate = (timeZone, offsetDays = 0) => {
 };
 
 const failure = (message, code = "error", status = 400) => Object.assign(new Error(message), { code, status });
+
+/* ---------------------------------------------------------------- khử trùng lịch thi đấu (phòng thủ)
+   Pipeline vẫn là nơi sửa gốc; lớp này chặn các bản ghi trùng còn sót trong Supabase để MỌI trang dùng
+   getMatches đều không hiện một trận hai lần. Chỉ gộp khi cùng league_id, cùng ngày bắt đầu (phần ngày
+   của utc_date) và cùng cặp đội theo đúng chiều nhà/khách sau chuẩn hóa. KHÔNG gộp trận lượt về/đảo
+   chiều sân, cũng không gộp cùng cặp ở ngày khác — đó là các trận hợp lệ khác nhau. */
+const MATCH_TEAM_AFFIXES = new Set(["fc", "cf", "sc", "afc", "club", "de", "ca", "cd", "ec", "ifk", "bk",
+  "ac", "as", "us", "ss", "sv", "fk", "sk", "if", "ff", "ik"]);
+function normalizeMatchTeamName(name) {
+  return searchKey(name).replace(/[^a-z0-9]+/g, " ").split(" ")
+    .filter((t) => t && !MATCH_TEAM_AFFIXES.has(t)).join(" ").trim();
+}
+function matchDedupeKey(m) {
+  if (!m || m.league_id === null || m.league_id === undefined || !m.utc_date || !m.home_name || !m.away_name) return null;
+  return `${m.league_id}|${String(m.utc_date).slice(0, 10)}|${normalizeMatchTeamName(m.home_name)}|${normalizeMatchTeamName(m.away_name)}`;
+}
+const MATCH_STATUS_RANK = { FINISHED: 50, AWARDED: 40, PAUSED: 35, IN_PLAY: 30, TIMED: 20, SCHEDULED: 10 };
+function matchRecordScore(m) {
+  return {
+    hasScore: (m.home_score !== null && m.home_score !== undefined) || (m.away_score !== null && m.away_score !== undefined) ? 1 : 0,
+    status: MATCH_STATUS_RANK[m.status] || 0,
+    id: Number.isFinite(Number(m.id)) ? Number(m.id) : Number.MAX_SAFE_INTEGER,
+  };
+}
+function isBetterMatchRecord(candidate, current) {
+  const a = matchRecordScore(candidate), b = matchRecordScore(current);
+  if (a.hasScore !== b.hasScore) return a.hasScore > b.hasScore;
+  if (a.status !== b.status) return a.status > b.status;
+  return a.id < b.id;
+}
+function dedupeMatches(rows) {
+  const out = [], indexByKey = new Map();
+  let removed = 0;
+  (rows || []).forEach((m) => {
+    const key = matchDedupeKey(m);
+    if (!key) { out.push(m); return; }
+    const idx = indexByKey.get(key);
+    if (idx === undefined) { indexByKey.set(key, out.length); out.push(m); return; }
+    removed += 1;
+    if (isBetterMatchRecord(m, out[idx])) out[idx] = m;
+  });
+  if (removed && typeof console !== "undefined" && console.debug) {
+    console.debug(`[Tymex] Đã gộp ${removed} trận trùng trong danh sách lịch thi đấu.`);
+  }
+  return out;
+}
 const kvCache = new Map();
 async function kv(key, ttlMs = 60000) {
   const hit = kvCache.get(key);
@@ -110,7 +156,8 @@ async function getMatches(p) {
   }
   const { data, error } = await q.order("utc_date", { ascending: asc }).order("id", { ascending: true }).limit(Math.min(Number(p.limit) || 100, 500));
   if (error) throw failure("Không đọc được lịch thi đấu: " + error.message, "read_error", 502);
-  return { matches: data, count: data.length, tz: zone, range: { from, to } };
+  const matches = dedupeMatches(data || []);
+  return { matches, count: matches.length, tz: zone, range: { from, to } };
 }
 
 async function getStatus() {
@@ -164,4 +211,5 @@ const cloudApiTimed = (path, opts) => Promise.race([
   new Promise((_, rej) => setTimeout(() => rej(failure("Máy chủ phản hồi quá lâu (25 giây). Bấm Thử lại; nếu vẫn vậy, thử mở trang ở cửa sổ ẩn danh hoặc xóa dữ liệu trang rồi đăng nhập lại.", "timeout", 504)), 25000)),
 ]);
 
-window.Tymex = { auth, cloudApi: cloudApiTimed, clearCache, configured: () => !!sb };
+window.Tymex = { auth, cloudApi: cloudApiTimed, clearCache, configured: () => !!sb, kv, dedupeMatches, normalizeMatchTeamName };
+window.TymexData = window.Tymex;

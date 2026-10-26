@@ -9,7 +9,32 @@ const STATUS_LABEL = {
 };
 const $ = (sel, root = document) => root.querySelector(sel);
 const app = $("#app");
-const state = { status: null, tz: localStorage.getItem("tz") || null, syncPoll: null, liveTimer: null, simTimer: null };
+const state = { status: null, tz: localStorage.getItem("tz") || null, syncPoll: null, liveTimer: null, simTimer: null, currentRoute: null, lastNonMatchRoute: null };
+/* Điều hướng theo ngữ cảnh: nhớ route gần nhất KHÔNG phải trang trận, vị trí cuộn của từng route và
+   trạng thái trang Trực tiếp (bộ lọc giải, thẻ đang mở, cửa sổ "sắp diễn ra", ngày đang xem) trong
+   sessionStorage — để nút "Quay lại" ở trang trận quay về đúng nơi người dùng vừa rời khỏi, thay vì
+   phụ thuộc vào history.back() (ngăn xếp lịch sử của trình duyệt không phản ánh đúng tuyến trong ứng dụng:
+   lần tải đầu/đăng nhập luôn dựng trang Tổng quan trong bộ nhớ mà không tạo mục lịch sử tương ứng, nên
+   history.back() từ trang trận có thể rơi về mục nhập đầu tiên — tab Tổng quan — thay vì Trực tiếp). */
+const NAV_LAST_ROUTE_KEY = "tymex:last-non-match-route";
+const NAV_SCROLL_KEY = "tymex:route-scroll";
+const LIVE_UI_KEY = "tymex:live-ui";
+const storageGet = (key) => { try { return sessionStorage.getItem(key); } catch { return null; } };
+const storageSet = (key, value) => { try { sessionStorage.setItem(key, value); } catch { /* bỏ qua */ } };
+const storageJson = (key, fallback) => { try { const v = JSON.parse(storageGet(key) || "null"); return v ?? fallback; } catch { return fallback; } };
+const scrollPositions = new Map(Object.entries(storageJson(NAV_SCROLL_KEY, {})));
+function persistScrollPositions() { storageSet(NAV_SCROLL_KEY, JSON.stringify(Object.fromEntries(scrollPositions))); }
+state.lastNonMatchRoute = storageGet(NAV_LAST_ROUTE_KEY) || "#/";
+const ROUTE_LABELS = { dashboard: "Tổng quan", live: "Trực tiếp", schedule: "Lịch thi đấu", standings: "Bảng xếp hạng", teams: "Đội bóng", predictions: "Lịch sử dự đoán", settings: "Cài đặt" };
+function routeNameOfHash(hash) {
+  const seg = String(hash || "").replace(/^#\/?/, "").split(/[/?]/)[0];
+  return seg === "" ? "dashboard" : seg;
+}
+function backLinkHtml() {
+  const target = state.lastNonMatchRoute || storageGet(NAV_LAST_ROUTE_KEY) || "#/";
+  const label = ROUTE_LABELS[routeNameOfHash(target)] || "trang trước";
+  return `<p><a class="muted" href="${esc(target)}">‹ Quay lại ${esc(label)}</a></p>`;
+}
 
 /* ---------------------------------------------------------------- tiện ích */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -121,6 +146,10 @@ function setParams(patch) {
   const s = new URLSearchParams(next).toString();
   location.hash = "#/" + parts.join("/") + (s ? "?" + s : "");
 }
+const canonicalHash = () => {
+  const raw = location.hash.replace(/^#/, "") || "/";
+  return "#" + (raw.startsWith("/") ? raw : "/" + raw);
+};
 const ROUTES = {
   "": ["dashboard", pageDashboard], schedule: ["schedule", pageSchedule], match: ["match", pageMatch], live: ["live", pageLive],
   standings: ["standings", pageStandings], teams: ["teams", pageTeams], predictions: ["predictions", pageHistory], settings: ["settings", pageSettings],
@@ -128,18 +157,33 @@ const ROUTES = {
 async function render() {
   if (state.liveTimer) { clearInterval(state.liveTimer); state.liveTimer = null; }
   if (state.simTimer) { clearInterval(state.simTimer); state.simTimer = null; liveState.sim = null; }
+  // Lưu vị trí cuộn của route đang rời khỏi trước khi nội dung bị thay.
+  if (state.currentRoute) {
+    scrollPositions.set(state.currentRoute, window.scrollY || 0);
+    persistScrollPositions();
+  }
   const { parts, params } = parseHash();
   const [name, fn] = ROUTES[parts[0] || ""] || ROUTES[""];
+  const thisRoute = canonicalHash();
+  state.currentRoute = thisRoute;
+  if (name !== "match") {
+    state.lastNonMatchRoute = thisRoute;
+    storageSet(NAV_LAST_ROUTE_KEY, thisRoute);
+  }
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === name));
   app.innerHTML = loading();
+  let rendered = false;
   try {
     if (!state.status) await refreshStatus();
     await fn(parts, params);
+    rendered = true;
   } catch (e) {
     app.innerHTML = errorBox(e);
     $("[data-retry]", app)?.addEventListener("click", render);
   }
-  window.scrollTo(0, 0);
+  // Khôi phục vị trí cuộn đã lưu của route này (trang trận luôn mở từ đầu trang).
+  const restoreY = rendered && name !== "match" ? (scrollPositions.get(thisRoute) || 0) : 0;
+  requestAnimationFrame(() => window.scrollTo(0, restoreY));
 }
 
 async function refreshStatus() {
@@ -210,7 +254,22 @@ async function pageSchedule(_, params) {
    Tỷ số/phút lấy trực tiếp từ ESPN ngay trong trình duyệt (không qua lần đồng bộ 3 giờ của Supabase);
    TheSportsDB bổ sung các giải ESPN không có (K League, V.League...) — mỗi thẻ ghi rõ nguồn của trận đó.
    Dự đoán trực tiếp và mô phỏng chạy bằng mô hình trong live.js (port từ app/prediction/live.py). */
-const liveState = { open: new Set(), sim: null, filter: "", current: new Map(), draw: null };
+const liveUiSaved = storageJson(LIVE_UI_KEY, {});
+const liveState = {
+  open: new Set(Array.isArray(liveUiSaved.open) ? liveUiSaved.open : []),
+  sim: null,
+  filter: liveUiSaved.filter || "",
+  window: liveUiSaved.window || "today",
+  viewDate: liveUiSaved.viewDate || "",
+  current: new Map(), draw: null,
+  possessionMini: new Map(),
+};
+function persistLiveUi() {
+  storageSet(LIVE_UI_KEY, JSON.stringify({
+    open: [...liveState.open], filter: liveState.filter,
+    window: liveState.window, viewDate: liveState.viewDate,
+  }));
+}
 
 const teamKeyLive = (name) => TymexLive.normTeam(name).replace(/\b(fc|cf|sc|afc|club|bk)\b/g, "").replace(/\s+/g, " ").trim();
 const nameMatch = (a, b) => a && b && (a === b || (a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b)));
@@ -252,6 +311,188 @@ function probChartSvg(points, homeName) {
     <circle cx="${X(last.minute)}" cy="${Y(last.p_home)}" r="3.2"></circle></svg>
   <div class="plabels"><span>Phút 0</span><span>Xác suất ${esc(homeName)} thắng: <b>${pct(last.p_home * 100, 0)}%</b></span><span>Phút ${last.minute}</span></div>`;
 }
+/* ---- khối "Nhận định dự đoán": kết quả & tỉ số, tài/xỉu bàn thắng, tài/xỉu phạt góc ----
+   Số liệu bàn thắng/1X2 tính bằng mô hình trong live.js (port của markets.py, cùng ngưỡng Mạnh/Khá);
+   phạt góc nạp LƯỜI từ ESPN (tỷ lệ góc gần nhất của giải) — không đủ dữ liệu thì nói rõ, không bịa số. */
+const fmtProb = (p) => pct(p * 100, 0) + "%";
+const fmtLn = (x) => Number(x).toFixed(1).replace(".", ",");
+function pickChip(p) {
+  const cls = p.strength === "Mạnh" ? "strong" : p.strength === "Khá" ? "ok" : "consider";
+  return `<span class="pick-chip ${cls}">${esc(p.selection)} · ${fmtProb(p.probability)} · ${esc(p.strength)}</span>`;
+}
+function picksChips(picks) {
+  if (!picks || !picks.length) return `<p class="small muted">Không có lựa chọn nào đạt xác suất 50%.</p>`;
+  return `<div class="pick-chips">${picks.map(pickChip).join("")}</div>`;
+}
+function ouPickFromPicks(picks) {
+  const p = (picks || []).find((x) => x.market === "goals_ou" || x.market === "corners_ou");
+  if (!p) return null;
+  const m = /(\d+)[.,](\d+)/.exec(p.selection || "");
+  return { line: m ? Number(m[1] + "." + m[2]) : null, side: (p.selection || "").startsWith("Tài") ? "Tài" : "Xỉu" };
+}
+function linesHtml(lines, subset, ouPick, unit) {
+  const rows = (lines || []).filter((l) => subset.includes(l.line)).map((l) => {
+    const rec = ouPick && ouPick.line !== null && Math.abs(ouPick.line - l.line) < 1e-9 ? ouPick.side : null;
+    return `<div class="ln-row"><span class="ln-line">${fmtLn(l.line)} ${unit}</span>
+      <span class="ln-side ${rec === "Tài" ? "rec" : ""}">Tài ${fmtProb(l.over)}${rec === "Tài" ? " ★" : ""}</span>
+      <span class="ln-side ${rec === "Xỉu" ? "rec" : ""}">Xỉu ${fmtProb(l.under)}${rec === "Xỉu" ? " ★" : ""}</span></div>`;
+  }).join("");
+  return `<div class="ln-table">${rows}</div>`;
+}
+const verdictClock = () => new Date().toLocaleTimeString("vi-VN", { timeZone: tz(), hour: "2-digit", minute: "2-digit", hour12: false });
+function touchVerdictTime(fromEl) {
+  const el = fromEl?.closest?.(".verdict")?.querySelector("[data-verdict-time]");
+  if (el) el.textContent = `Nhận định cập nhật lúc ${verdictClock()}`;
+}
+function lineupEligible(ev) {
+  if (!ev || ev.source !== "ESPN" || !ev.slug || ev.state !== "pre" || !ev.startIso) return false;
+  const diff = new Date(ev.startIso).getTime() - Date.now();
+  return diff <= 2 * 3600 * 1000 && diff > -30 * 60 * 1000;
+}
+function lineupInfoHtml(info, ev) {
+  if (!info) return "";
+  if (info.status === "available") {
+    const adj = info.adjustment;
+    const missingNames = [...(adj.homeMissing || []), ...(adj.awayMissing || [])]
+      .map((p) => `${esc(p.name)} (${esc(TymexLive.LINEUP_GROUP_LABEL?.[p.positionGroup] || p.positionGroup || "chưa rõ vị trí")})`).join(", ");
+    return `<div class="vd-sec lineup-box"><span class="lineup-badge">Đã tính đội hình xuất phát</span>
+      <p class="small">λ sau đội hình: <b class="num">${num(adj.lambdaHome)} - ${num(adj.lambdaAway)}</b> <span class="muted">(trước đó ${num(adj.lambdaHomeBefore)} - ${num(adj.lambdaAwayBefore)})</span>${missingNames ? ` · Thiếu trụ cột: ${missingNames}` : ""}</p>
+      ${(adj.explanations || []).map((x) => `<p class="small muted">${esc(x)}</p>`).join("")}
+      <p class="small muted">Mô hình phạt góc chưa dùng yếu tố đội hình — phần phạt góc ở dưới giữ nguyên.</p></div>`;
+  }
+  if (info.status === "unpublished") {
+    return `<p class="small muted">Đội hình xuất phát chưa công bố — nhận định sẽ tự cập nhật khi có (thường ~60 phút trước giờ đá).</p>`;
+  }
+  return `<p class="small muted">Chưa đối chiếu được đội hình xuất phát với trận gần nhất — nhận định giữ nguyên theo λ hiện tại.</p>`;
+}
+function verdictHtml(ev, L, key, lineupInfo = null) {
+  const isLive = ev.state === "in" && ev.minute !== null && ev.homeScore !== null;
+  const v = isLive
+    ? TymexLive.buildVerdict(L.lh, L.la, { homeName: ev.home, awayName: ev.away, live: { minute: ev.minute, homeScore: ev.homeScore, awayScore: ev.awayScore, homeRed: (ev.reds || {}).home || 0, awayRed: (ev.reds || {}).away || 0 } })
+    : TymexLive.buildVerdict(L.lh, L.la, { homeName: ev.home, awayName: ev.away });
+  const lineupBlock = lineupInfo ? lineupInfoHtml(lineupInfo, ev)
+    : (!isLive && lineupEligible(ev) ? `<div id="lu-${key}" data-lineups="${key}"><p class="small muted">Đang kiểm tra đội hình xuất phát…</p></div>` : "");
+  return `<div class="verdict" data-verdict="${key}" id="vd-${key}">
+    <div class="vd-title">Nhận định dự đoán${isLive ? " — cập nhật trực tiếp" : ""}</div>
+    <div class="vd-updated" data-verdict-time>Nhận định cập nhật lúc ${esc(verdictClock())}</div>
+    ${lineupBlock}
+    <div class="vd-sec"><div class="vd-h">Kết quả & tỉ số</div>
+      ${isLive ? "" : probStrip(v.percent, ev.home, ev.away)}
+      <p class="small">${isLive ? "Tỉ số chung cuộc dự đoán" : "Tỉ số dự đoán"}: <b class="num">${v.score.home}-${v.score.away}</b> <span class="muted">(xác suất đúng chính xác ${fmtProb(v.score.prob)} — luôn thấp, chỉ để tham khảo)</span></p>
+      ${picksChips(v.picks)}
+      ${v.fallback ? `<p class="small muted">Chưa có lựa chọn nào đủ mạnh theo ngưỡng của mô hình (cần ≥ 57%); lựa chọn "Cân nhắc" ở trên là lựa chọn tốt nhất hiện có.</p>` : ""}
+    </div>
+    <div class="vd-sec"><div class="vd-h">Tài/Xỉu bàn thắng${isLive ? " (tổng bàn cuối trận, đã gồm tỉ số hiện tại)" : ""}</div>
+      ${linesHtml(v.markets.lines, [1.5, 2.5, 3.5], ouPickFromPicks(v.picks), "bàn")}
+      <p class="small muted">Tổng bàn kỳ vọng: <b class="num">${num(v.markets.expected_total_goals)}</b></p>
+    </div>
+    <div class="vd-sec"><div class="vd-h">Tài/Xỉu phạt góc</div>
+      <div id="lc-${key}" data-corners="${key}"><p class="small muted">Đang tính phạt góc từ các trận gần nhất của giải…</p></div>
+    </div>
+    <p class="vd-note">${esc(TymexLive.VERDICT_DISCLAIMER)}</p>
+  </div>`;
+}
+async function fillCorners(key) {
+  const item = liveState.current.get(key);
+  let box = $(`#lc-${CSS.escape(key)}`);
+  if (!box || !item) return;
+  const { ev } = item;
+  const noData = (extra = "") => { box.innerHTML = `<p class="small muted">Chưa đủ dữ liệu phạt góc từ ESPN cho trận này${extra}.</p>`; };
+  if (ev.source !== "ESPN" || !ev.slug) { noData(); return; }
+  let rows;
+  try { rows = await TymexLive.fetchLeagueCornerRows(ev.slug); } catch (e) { noData(); return; }
+  box = $(`#lc-${CSS.escape(key)}`);
+  if (!box) return;   // trang đã vẽ lại trong lúc chờ
+  const est = TymexLive.estimateCorners(rows, ev.home, ev.away);
+  if (!est.available) {
+    const detail = est.homeGames !== undefined ? ` (có ${est.matches} trận của giải có số liệu góc; đội chủ nhà mới có ${est.homeGames} trận sân nhà, đội khách ${est.awayGames} trận sân khách có góc)` : ` (mới có ${est.matches} trận của giải có số liệu góc)`;
+    noData(detail);
+    return;
+  }
+  let lines = est.lines, pick = est.pick, liveHtml = "";
+  if (ev.state === "in" && ev.minute !== null) {
+    try {
+      const sum = await TymexLive.fetchEspnSummary(ev.slug, ev.eventId);
+      const ah = parseFloat(sum.stats.home.wonCorners), aa = parseFloat(sum.stats.away.wonCorners);
+      if (!Number.isNaN(ah) && !Number.isNaN(aa)) {
+        const remaining = Math.max(TymexLive.FULL_MINUTES - ev.minute, 0) / TymexLive.FULL_MINUTES;
+        const projected = ah + aa + est.expected.total * remaining;
+        lines = TymexLive.cornerLines(projected);
+        pick = TymexLive.cornerPick(lines);
+        liveHtml = `<p class="small">Góc thực tế tới phút ${ev.minute}': <b class="num">${ah} - ${aa}</b> (tổng ${ah + aa}) · Chiếu cuối trận (ước tính từ nhịp góc còn lại): <b class="num">~${num(projected, 1)}</b> góc — các mốc dưới đây tính theo số chiếu này.</p>`;
+      }
+    } catch (e) { /* không có thống kê trực tiếp: chỉ hiện dự đoán trước trận */ }
+  }
+  box.innerHTML = `${liveHtml}
+    <p class="small">Góc kỳ vọng${ev.state === "in" ? " (trước trận)" : ""}: ${esc(ev.home)} <b class="num">${num(est.expected.home)}</b> · ${esc(ev.away)} <b class="num">${num(est.expected.away)}</b> · Tổng <b class="num">${num(est.expected.total)}</b></p>
+    ${linesHtml(lines, [8.5, 9.5, 10.5, 11.5], pick ? { line: pick.line, side: pick.side } : null, "góc")}
+    ${pick ? `<div class="pick-chips">${pickChip(pick)}</div>` : `<p class="small muted">Không có lựa chọn phạt góc nào đạt 50%.</p>`}
+    <p class="small muted">Tính từ ${est.matches} trận gần nhất của giải trên ESPN; tỷ lệ góc của đội đã co về trung bình giải. football-data.org không có dữ liệu phạt góc.</p>`;
+  touchVerdictTime(box);
+}
+
+/* ---- yếu tố ĐỘI HÌNH XUẤT PHÁT cho nhận định của trận sắp đá (chỉ ESPN, lười tải) ----
+   Kết quả được cache trong bộ nhớ: đội hình đã công bố giữ 10 phút; "chưa công bố" chỉ giữ ~60 giây
+   để lần làm mới sau kiểm tra lại, vì đội hình thường chỉ xuất hiện khoảng 60 phút trước giờ đá. */
+const lineupCache = new Map();
+async function computeLineupAdjustment(ev, L, currentSummary = null) {
+  const cacheKey = liveKey(ev);
+  const hit = lineupCache.get(cacheKey);
+  if (hit && Date.now() - hit.t < 10 * 60 * 1000) return hit.promise;
+  const promise = (async () => {
+    const sum = currentSummary || await TymexLive.fetchEspnSummary(ev.slug, ev.eventId);
+    const homeRoster = TymexLive.rosterForTeam(sum, { side: "home", name: ev.home, id: sum.teamIds?.home });
+    const awayRoster = TymexLive.rosterForTeam(sum, { side: "away", name: ev.away, id: sum.teamIds?.away });
+    const homeStarters = homeRoster ? homeRoster.players.filter((p) => p.starter) : [];
+    const awayStarters = awayRoster ? awayRoster.players.filter((p) => p.starter) : [];
+    if (!homeStarters.length || !awayStarters.length) return { status: "unpublished", summary: sum };
+    const [prevHome, prevAway] = await Promise.all([
+      TymexLive.fetchPreviousStartingXi(sum, "home", ev),
+      TymexLive.fetchPreviousStartingXi(sum, "away", ev),
+    ]);
+    if (!prevHome || !prevAway) return { status: "insufficient", summary: sum };
+    const missingHome = TymexLive.missingRegulars(homeRoster.players, prevHome);
+    const missingAway = TymexLive.missingRegulars(awayRoster.players, prevAway);
+    if (missingHome.status !== "available" || missingAway.status !== "available") return { status: "insufficient", summary: sum };
+    const adjustment = TymexLive.adjustLambdas(L.lh, L.la, missingHome, missingAway);
+    return { status: "available", adjustment, missing: { home: missingHome, away: missingAway }, summary: sum };
+  })();
+  const entry = { t: Date.now(), promise };
+  lineupCache.set(cacheKey, entry);
+  promise.then((info) => { if (info.status !== "available") entry.t = Date.now() - (10 * 60 * 1000 - 60 * 1000); }, () => { entry.t = 0; });
+  return promise;
+}
+async function fillLineups(key, currentSummary = null) {
+  const item = liveState.current.get(key);
+  if (!item || !lineupEligible(item.ev)) return;
+  const box = document.querySelector(`[data-lineups="${key}"]`);
+  if (!box) return;
+  let info;
+  try { info = await computeLineupAdjustment(item.ev, item.L, currentSummary); }
+  catch (e) { if (box.isConnected) box.innerHTML = lineupInfoHtml({ status: "insufficient" }, item.ev); return; }
+  const current = liveState.current.get(key);
+  const verdict = document.querySelector(`[data-verdict="${key}"]`);
+  if (!current || !verdict) return;
+  if (info.status !== "available") {
+    if (box.isConnected) { box.innerHTML = lineupInfoHtml(info, current.ev); touchVerdictTime(box); }
+    return;
+  }
+  const newL = { ...current.L, lh: info.adjustment.lambdaHome, la: info.adjustment.lambdaAway, lineupAdjustment: info.adjustment };
+  current.L = newL;
+  verdict.outerHTML = verdictHtml(current.ev, newL, key, info);
+  fillCorners(key);
+}
+
+function countdownLabel(ev, nowMs = Date.now()) {
+  if (!ev || !ev.startIso) return "";
+  const diff = new Date(ev.startIso).getTime() - nowMs;
+  if (!Number.isFinite(diff) || diff <= 0) return "";
+  const totalMinutes = Math.floor(diff / 60000);
+  if (totalMinutes < 1) return "còn chưa đầy 1 phút";
+  if (totalMinutes < 60) return `còn ${totalMinutes} phút`;
+  const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
+  return minutes ? `còn ${hours} giờ ${minutes} phút` : `còn ${hours} giờ`;
+}
 function liveCard(ev, preds) {
   const L = lambdasForLive(ev, preds);
   const key = liveKey(ev);
@@ -259,7 +500,7 @@ function liveCard(ev, preds) {
   const isLive = ev.state === "in", isPost = ev.state === "post";
   const clock = isLive ? `<span class="live-badge"><span class="live-dot"></span>LIVE ${esc(ev.halftime ? "Nghỉ giữa hiệp" : ev.clockLabel || (ev.minute !== null ? ev.minute + "'" : ""))}</span>`
     : isPost ? `<span class="status done">Kết thúc</span>`
-    : `<span class="status">Sắp đá${ev.startIso ? " · " + esc(fmtTime(ev.startIso)) : ""}</span>`;
+    : `<span class="status">Sắp đá${ev.startIso ? " · " + esc(fmtTime(ev.startIso)) : ""}${countdownLabel(ev) ? ` · ${esc(countdownLabel(ev))}` : ""}</span>`;
   const scorers = (ev.goals || []).length
     ? `<div class="scorers">${ev.goals.map((g) => `<span>${g.minute}' ${esc(g.scorer || "Bàn thắng")} (${esc(g.side === "home" ? ev.home : ev.away)})</span>`).join("")}</div>` : "";
   let predHtml = "";
@@ -280,6 +521,8 @@ function liveCard(ev, preds) {
       <div class="vteam away">${crest(ev.awayLogo, ev.away)}<span class="name">${esc(ev.away)}</span></div>
     </div>
     ${scorers}${predHtml}
+    ${liveState.possessionMini.has(key) ? possessionMiniHtml(ev, liveState.possessionMini.get(key)) : ""}
+    ${ev.state === "post" ? "" : verdictHtml(ev, L, key)}
     <div class="live-actions">${lambdaNote}
       ${ev.source === "ESPN" ? `<button class="btn btn-small" data-expand="${key}">${liveState.open.has(key) ? "Ẩn thống kê" : "Thống kê & diễn biến"}</button>` : ""}
       <button class="btn btn-small" data-sim="${key}">▶ Mô phỏng</button>
@@ -291,7 +534,7 @@ function liveCard(ev, preds) {
 /* ---- thống kê chi tiết + dòng sự kiện (ESPN summary; chỉ vẽ số liệu nguồn thật sự trả về) ---- */
 function comparativeStats(sum) {
   const rows = TymexLive.STAT_DEFS
-    .filter(([name]) => sum.stats.home[name] !== undefined || sum.stats.away[name] !== undefined)
+    .filter(([name]) => name !== "possessionPct" && (sum.stats.home[name] !== undefined || sum.stats.away[name] !== undefined))
     .map(([name, label]) => {
       const h = sum.stats.home[name], a = sum.stats.away[name];
       const hv = parseFloat(h), av = parseFloat(a);
@@ -325,6 +568,87 @@ function eventsTimeline(sum, ev) {
   return `<h3 style="margin-top:1rem">Diễn biến trận đấu (ESPN)</h3><ul class="evt-list">${sum.keyEvents.map((e) =>
     `<li><span class="evt-min">${esc(e.clockLabel || e.minute + "'")}</span><span class="evt-kind ${e.scoringPlay ? "goal" : ""}">${esc(eventKindLabel(e.type, e.scoringPlay))}</span><span class="evt-text">${esc(e.text)}${e.side ? ` <span class="muted">(${esc(e.side === "home" ? ev.home : ev.away)})</span>` : ""}</span></li>`).join("")}</ul>`;
 }
+/* ---- KIỂM SOÁT BÓNG ----
+   ESPN chỉ cho % lũy kế tại thời điểm gọi API, KHÔNG có lịch sử theo phút. Biểu đồ theo thời gian vì vậy
+   chỉ vẽ từ các mẫu máy chủ Tymex tự ghi mỗi ~1–2 phút (GitHub Actions chạy vòng lặp 52 phút mỗi giờ,
+   chu kỳ mục tiêu 90 giây → Supabase kv "possession:<id>"). Không có mẫu trung tâm thì chỉ hiện thanh %
+   hiện tại/tỉ số cuối + một dòng ghi rõ — tuyệt đối không tự suy diễn hay lấp đầy các phút trước đó. */
+function possessionValues(sum) {
+  if (!sum || !sum.stats) return null;
+  const h = parseFloat(sum.stats.home.possessionPct), a = parseFloat(sum.stats.away.possessionPct);
+  if (Number.isNaN(h) || Number.isNaN(a) || h + a <= 0) return null;
+  return { home: Math.round(h * 10) / 10, away: Math.round(a * 10) / 10 };
+}
+function possessionBarHtml(ev, poss, title = "Kiểm soát bóng") {
+  if (!poss) return "";
+  const homePct = Math.max(0, Math.min(100, poss.home));
+  return `<div class="poss-block"><div class="poss-head"><span>${esc(title)}</span><span class="muted">lũy kế tới hiện tại</span></div>
+    <div class="poss-labels"><span><b class="num">${pct(poss.home, 1)}%</b> ${esc(ev.home)}</span><span>${esc(ev.away)} <b class="num">${pct(poss.away, 1)}%</b></span></div>
+    <div class="poss-bar" role="img" aria-label="Kiểm soát bóng ${esc(ev.home)} ${pct(poss.home, 1)}%, ${esc(ev.away)} ${pct(poss.away, 1)}%"><div class="poss-home" style="width:${homePct}%"></div><div class="poss-away" style="width:${100 - homePct}%"></div></div></div>`;
+}
+function possessionMiniHtml(ev, poss) {
+  if (!poss) return "";
+  const homePct = Math.max(0, Math.min(100, poss.home));
+  return `<div class="poss-mini" title="Kiểm soát bóng"><span>${esc(ev.home)} <b class="num">${pct(poss.home, 1)}%</b></span><div class="poss-bar mini"><div class="poss-home" style="width:${homePct}%"></div><div class="poss-away" style="width:${100 - homePct}%"></div></div><span><b class="num">${pct(poss.away, 1)}%</b> ${esc(ev.away)}</span></div>`;
+}
+const possessionSeriesCache = new Map();
+async function fetchCentralPossession(ev) {
+  if (!ev || ev.source !== "ESPN" || !ev.eventId) return null;
+  const cacheKey = String(ev.eventId);
+  const hit = possessionSeriesCache.get(cacheKey);
+  if (hit && Date.now() - hit.t < 60 * 1000) return hit.payload;
+  let payload = null;
+  try {
+    const data = await window.TymexData.kv(`possession:${cacheKey}`);
+    if (data && Array.isArray(data.samples)) payload = data;
+  } catch (e) { payload = null; }
+  possessionSeriesCache.set(cacheKey, { t: Date.now(), payload });
+  return payload;
+}
+function possessionChartHtml(ev, payload) {
+  const samples = ((payload && payload.samples) || [])
+    .filter((s) => Number.isFinite(parseFloat(s.possession_home_pct)))
+    .map((s) => ({ minute: s.minute === null || s.minute === undefined || s.minute === "" ? null : Number(s.minute),
+      clock: s.clock || "", homePct: parseFloat(s.possession_home_pct), ts: s.ts_utc || "" }))
+    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  if (!samples.length) {
+    return `<p class="muted small">Chưa có mẫu theo thời gian cho trận này.</p>`;
+  }
+  if (samples.length < 2) {
+    return `<p class="muted small">Mới ghi được 1 mẫu kiểm soát bóng — biểu đồ sẽ hiện khi hệ thống ghi thêm mẫu trong lúc trận đấu diễn ra.</p>`;
+  }
+  const W = 640, H = 180, padL = 34, padR = 10, padT = 12, padB = 24;
+  const hasAllMinutes = samples.every((s) => Number.isFinite(s.minute));
+  // Thiếu phút trận ở bất kỳ mẫu nào thì dùng thứ tự mẫu với khoảng danh nghĩa 1,5 phút (chu kỳ ghi mẫu),
+  // thay vì bịa phút trận. Nhãn đầu/cuối khi đó lấy đồng hồ trận hoặc giờ ghi mẫu, không ghi phút giả.
+  const minutes = hasAllMinutes ? samples.map((s) => s.minute) : samples.map((_, i) => i * 1.5);
+  const maxMinute = Math.max(hasAllMinutes ? 45 : 10, ...minutes);
+  const x = (m) => padL + (Math.max(0, Math.min(maxMinute, m)) / maxMinute) * (W - padL - padR);
+  const y = (p) => padT + (1 - Math.max(0, Math.min(100, p)) / 100) * (H - padT - padB);
+  const pts = samples.map((s, i) => [x(minutes[i]), y(s.homePct)]);
+  // Đường BẬC THANG: giữ nguyên % lũy kế của mẫu trước cho tới đúng thời điểm mẫu kế tiếp; các chấm là mẫu thật.
+  let line = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) line += ` L${pts[i][0].toFixed(1)},${pts[i - 1][1].toFixed(1)} L${pts[i][0].toFixed(1)},${pts[i][1].toFixed(1)}`;
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)},${y(0).toFixed(1)} L${pts[0][0].toFixed(1)},${y(0).toFixed(1)} Z`;
+  const grid = [0, 50, 100].map((p) => `<line x1="${padL}" y1="${y(p)}" x2="${W - padR}" y2="${y(p)}" class="poss-grid"/><text x="4" y="${y(p) + 4}" class="poss-axis">${p}%</text>`).join("");
+  const sampleLabel = (s, i) => s.clock || (hasAllMinutes ? `${minutes[i]}'` : (s.ts ? `${String(s.ts).slice(11, 16)} UTC` : `Mẫu ${i + 1}`));
+  const dots = pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3" class="poss-dot"><title>${esc(sampleLabel(samples[i], i))}: ${esc(ev.home)} ${pct(samples[i].homePct, 1)}%</title></circle>`).join("");
+  const firstLabel = sampleLabel(samples[0], 0), lastLabel = sampleLabel(samples[samples.length - 1], samples.length - 1);
+  return `<div class="poss-chart"><div class="poss-head"><span>Kiểm soát bóng theo thời gian</span><span class="muted">${esc(ev.home)} (%)</span></div>
+    <svg viewBox="0 0 ${W} ${H}" class="poss-svg" role="img" aria-label="Biểu đồ kiểm soát bóng của ${esc(ev.home)} theo thời gian">${grid}<line x1="${padL}" y1="${y(50)}" x2="${W - padR}" y2="${y(50)}" class="poss-mid"/><path d="${area}" class="poss-area"/><path d="${line}" class="poss-line"/>${dots}<text x="${padL}" y="${H - 6}" class="poss-axis">${esc(firstLabel)}</text><text x="${W - padR - 44}" y="${H - 6}" class="poss-axis">${esc(lastLabel)}</text></svg>
+    <p class="muted small">Hệ thống Tymex tự ghi mẫu mỗi ~1–2 phút từ ESPN — không cần mở trang. Các chấm là mẫu thật; đường bậc thang giữ giá trị lũy kế của mẫu trước tới mẫu kế tiếp, không phải dữ liệu từng phút. Có thể khuyết vài phút quanh thời điểm chuyển ca mỗi giờ.</p></div>`;
+}
+async function fillPossessionChart(key) {
+  const item = liveState.current.get(key);
+  const box = document.querySelector(`[data-possession-chart="${key}"]`);
+  if (!item || !box) return;
+  const payload = await fetchCentralPossession(item.ev);
+  if (!box.isConnected) return;
+  box.innerHTML = payload && (payload.samples || []).length
+    ? possessionChartHtml(item.ev, payload)
+    : `<p class="muted small">Chưa có mẫu theo thời gian cho trận này.</p>`;
+}
+
 async function fillLiveDetail(key) {
   const box = $(`#ld-${CSS.escape(key)}`);
   const item = liveState.current.get(key);
@@ -337,18 +661,42 @@ async function fillLiveDetail(key) {
     const pts = TymexLive.probTimeline(L.lh, L.la, ev.goals, curMinute, (ev.reds || {}).home || 0, (ev.reds || {}).away || 0);
     if (pts.length >= 2) parts.push(`<h3>Biến động xác suất thắng</h3>${probChartSvg(pts, ev.home)}<p class="small muted">Đường xác suất do mô hình trực tiếp của Tymex tính lại tại từng thời điểm ghi bàn đã biết — đây là đầu ra của mô hình, không phải dữ liệu thế trận/cú sút thật.</p>`);
   }
+  let sumRef = null;
   if (ev.source === "ESPN") {
     try {
       const sum = await TymexLive.fetchEspnSummary(ev.slug, ev.eventId);
+      sumRef = sum;
+      const poss = possessionValues(sum);
+      if (poss) {
+        liveState.possessionMini.set(key, poss);
+        parts.push(possessionBarHtml(ev, poss, ev.state === "post" ? "Kiểm soát bóng chung cuộc" : "Kiểm soát bóng"));
+      }
+      parts.push(`<div data-possession-chart="${key}"><p class="muted small">Đang tải mẫu kiểm soát bóng theo thời gian…</p></div>`);
       parts.push(comparativeStats(sum) || `<div class="notice">ESPN không cung cấp thống kê chi tiết cho trận này.</div>`);
       parts.push(eventsTimeline(sum, ev));
     } catch (e) {
       parts.push(`<div class="notice warn">Không tải được thống kê chi tiết từ ESPN (${esc(e.message || e)}).</div>`);
+      parts.push(`<div data-possession-chart="${key}"><p class="muted small">Đang tải mẫu kiểm soát bóng theo thời gian…</p></div>`);
     }
   } else {
     parts.push(`<div class="notice">Nguồn TheSportsDB chỉ cung cấp tỷ số trực tiếp, không có thống kê chi tiết cho trận này.</div>`);
+    parts.push(`<p class="muted small">Chưa có mẫu theo thời gian cho trận này.</p>`);
+  }
+  if (ev.state === "post") {
+    const v = TymexLive.buildVerdict(L.lh, L.la, { homeName: ev.home, awayName: ev.away });
+    const ch = sumRef ? parseFloat(sumRef.stats.home.wonCorners) : NaN;
+    const ca = sumRef ? parseFloat(sumRef.stats.away.wonCorners) : NaN;
+    parts.push(`<h3 style="margin-top:1rem">Nhận định dự đoán (mô hình, TRƯỚC trận — để đối chiếu kết quả thật)</h3>
+      <p class="small muted">Nhận định cập nhật lúc ${esc(verdictClock())}</p>
+      <p class="small">Tỉ số dự đoán: <b class="num">${v.score.home}-${v.score.away}</b> · Tổng bàn kỳ vọng: <b class="num">${num(v.markets.expected_total_goals)}</b></p>
+      ${picksChips(v.picks)}
+      ${linesHtml(v.markets.lines, [1.5, 2.5, 3.5], ouPickFromPicks(v.picks), "bàn")}
+      ${!Number.isNaN(ch) && !Number.isNaN(ca) ? `<p class="small">Phạt góc thực tế: <b class="num">${ch} - ${ca}</b> (tổng ${ch + ca}).</p>` : ""}
+      <p class="vd-note">${esc(TymexLive.VERDICT_DISCLAIMER)}</p>`);
   }
   box.innerHTML = parts.join("") || `<div class="notice">Chưa có dữ liệu chi tiết cho trận này.</div>`;
+  if (ev.source === "ESPN") fillPossessionChart(key);
+  if (ev.state === "pre" && lineupEligible(ev)) fillLineups(key, sumRef);
 }
 async function toggleLiveDetail(key, btn) {
   const box = $(`#ld-${CSS.escape(key)}`);
@@ -359,6 +707,7 @@ async function toggleLiveDetail(key, btn) {
     liveState.open.add(key); box.hidden = false; if (btn) btn.textContent = "Ẩn thống kê";
     await fillLiveDetail(key);
   }
+  persistLiveUi();
 }
 
 /* ---- chế độ MÔ PHỎNG trực tiếp (diễn biến giả lập bằng mô hình, luôn gắn nhãn rõ) ---- */
@@ -451,21 +800,48 @@ function liveFilterOptions(events) {
 }
 const liveEventMatchesFilter = (ev) => !liveState.filter
   || (liveState.filter.startsWith("tsdb:") ? ev.source === "TheSportsDB" && ev.league === liveState.filter.slice(5) : ev.slug === liveState.filter);
+const LIVE_WINDOWS = [
+  { id: "1h", label: "1 giờ", hours: 1 },
+  { id: "3h", label: "3 giờ", hours: 3 },
+  { id: "6h", label: "6 giờ", hours: 6 },
+  { id: "12h", label: "12 giờ", hours: 12 },
+  { id: "today", label: "Hôm nay", hours: null },
+];
+function liveWindowById(id) { return LIVE_WINDOWS.find((w) => w.id === id) || LIVE_WINDOWS[LIVE_WINDOWS.length - 1]; }
+function upcomingInWindow(ev, windowId, nowMs = Date.now()) {
+  if (!ev || ev.state !== "pre" || !ev.startIso) return false;
+  const start = new Date(ev.startIso).getTime();
+  if (!Number.isFinite(start)) return false;
+  const win = liveWindowById(windowId);
+  if (win.hours === null) return dayKey(ev.startIso) === dayKey(new Date(nowMs).toISOString());
+  return start >= nowMs && start <= nowMs + win.hours * 3600 * 1000;
+}
+function liveWindowChipsHtml() {
+  const active = liveWindowById(liveState.window).id;
+  return LIVE_WINDOWS.map((w) => `<button type="button" class="window-chip ${w.id === active ? "on" : ""}" data-window="${w.id}" aria-pressed="${w.id === active}">${w.label}</button>`).join("");
+}
 async function pageLive() {
   app.innerHTML = `<div class="page-head"><h1>Trực tiếp</h1>
     <span class="muted small">Tỷ số lấy trực tiếp từ ESPN + quét toàn cầu TheSportsDB, tự làm mới mỗi 60 giây<span id="live-updated"></span></span></div>
   <div id="sim-holder"></div>
   <div class="filters"><select id="live-filter" aria-label="Lọc theo giải đấu"></select>
     <span class="muted small">Champions League (Cúp C1) và các giải ưu tiên làm mới mỗi 60 giây; giải còn lại tối đa 4 phút/lần.</span></div>
+  <div class="filters live-tools">
+    <label class="live-date-label">Xem trận theo ngày <input type="date" id="live-date" aria-label="Xem trận theo ngày" value="${esc(liveState.viewDate || "")}"></label>
+    <button type="button" class="btn btn-small" id="live-date-today">Hôm nay</button>
+    <span class="muted small" id="live-date-note">${liveState.viewDate ? "Đang xem lịch của ngày đã chọn." : "Chưa chọn ngày riêng — đang xem trực tiếp như thường lệ."}</span>
+  </div>
+  <div class="window-row" id="live-window-row"><span class="muted small">Sắp diễn ra trong:</span><div class="window-chips" id="live-window-chips">${liveWindowChipsHtml()}</div></div>
   <div id="live-holder">${loading("Đang tải tỷ số trực tiếp…")}</div>`;
   const draw = async (forceAll = false) => {
     const holder = $("#live-holder");
     if (!holder) return;
     let data, preds = [];
+    const dateMode = !!liveState.viewDate;
     try {
-      data = await TymexLive.fetchLiveEvents(forceAll);
+      data = dateMode ? await TymexLive.fetchEventsForDate(liveState.viewDate, forceAll) : await TymexLive.fetchLiveEvents(forceAll);
     } catch (e) {
-      holder.innerHTML = `<div class="notice error"><b>Không lấy được dữ liệu trực tiếp.</b><br>${esc(e.message || e)}<div style="margin-top:.6rem"><button class="btn btn-small" id="live-retry">Thử lại</button></div></div>`;
+      holder.innerHTML = `<div class="notice error"><b>Không lấy được dữ liệu ${dateMode ? "cho ngày đã chọn" : "trực tiếp"}.</b><br>${esc(e.message || e)}<div style="margin-top:.6rem"><button class="btn btn-small" id="live-retry">Thử lại</button></div></div>`;
       $("#live-retry")?.addEventListener("click", () => draw(true));
       return;
     }
@@ -477,25 +853,61 @@ async function pageLive() {
     liveState.current = new Map();
     const evs = data.events.filter(liveEventMatchesFilter);
     const live = evs.filter((e) => e.state === "in");
-    const upcoming = evs.filter((e) => e.state === "pre");
+    const upcomingAll = evs.filter((e) => e.state === "pre");
+    const upcoming = upcomingAll.filter((e) => upcomingInWindow(e, liveState.window));
     const finished = evs.filter((e) => e.state === "post");
     const groupRender = (arr) => {
       const groups = new Map();
       arr.forEach((e) => { if (!groups.has(e.league)) groups.set(e.league, []); groups.get(e.league).push(e); });
       return [...groups].map(([league, ms]) => `<div class="league-group"><div class="league-name">${esc(league)}</div>${ms.map((e) => liveCard(e, preds)).join("")}</div>`).join("");
     };
+    const windowRow = $("#live-window-row");
+    if (windowRow) windowRow.hidden = dateMode;
+    const chips = $("#live-window-chips");
+    if (chips) chips.innerHTML = liveWindowChipsHtml();
     let html = "";
-    html += `<section class="section"><h2><span class="live-dot"></span>Đang diễn ra<span class="count">${live.length ? live.length + " trận" : ""}</span></h2>${live.length ? groupRender(live) : emptyBox("Hiện không có trận nào đang đá ở các giải chính")}</section>`;
-    if (upcoming.length) html += `<section class="section"><h2>Sắp diễn ra</h2>${groupRender(upcoming)}</section>`;
-    if (finished.length) html += `<section class="section"><h2>Kết quả hôm nay</h2>${groupRender(finished)}</section>`;
-    if (!evs.length) html += emptyBox("Không có trận nào khớp bộ lọc giải đấu hiện tại.");
+    if (dateMode) {
+      const dateTitle = fmtDate(`${liveState.viewDate}T12:00:00Z`, true);
+      html += `<section class="section"><h2>Trận ngày ${esc(dateTitle)}<span class="count">${evs.length ? evs.length + " trận" : ""}</span></h2>${evs.length ? groupRender(evs) : emptyBox("Không có trận nào trong dữ liệu ESPN/TheSportsDB cho ngày đã chọn và bộ lọc hiện tại.")}</section>`;
+    } else {
+      html += `<section class="section"><h2><span class="live-dot"></span>Đang diễn ra<span class="count">${live.length ? live.length + " trận" : ""}</span></h2>${live.length ? groupRender(live) : emptyBox("Hiện không có trận nào đang đá ở các giải chính")}</section>`;
+      const win = liveWindowById(liveState.window);
+      if (upcomingAll.length) {
+        html += `<section class="section"><h2>Sắp diễn ra<span class="count">${upcoming.length ? upcoming.length + " trận" : ""}</span></h2>${upcoming.length ? groupRender(upcoming) : emptyBox(`Không có trận sắp đá nào trong khung “${win.label}”.`)}</section>`;
+      }
+      if (finished.length) html += `<section class="section"><h2>Kết quả hôm nay</h2>${groupRender(finished)}</section>`;
+      if (!evs.length) html += emptyBox("Không có trận nào khớp bộ lọc giải đấu hiện tại.");
+    }
     holder.innerHTML = html;
     holder.querySelectorAll("[data-expand]").forEach((b) => b.addEventListener("click", () => toggleLiveDetail(b.dataset.expand, b)));
     holder.querySelectorAll("[data-sim]").forEach((b) => b.addEventListener("click", () => startSimulation(b.dataset.sim)));
+    holder.querySelectorAll("[data-corners]").forEach((el) => fillCorners(el.dataset.corners));
+    holder.querySelectorAll("[data-lineups]").forEach((el) => fillLineups(el.dataset.lineups));
     for (const key of liveState.open) { if (liveState.current.has(key)) fillLiveDetail(key); }
   };
   liveState.draw = draw;
-  $("#live-filter").addEventListener("change", (e) => { liveState.filter = e.target.value; draw(true); });
+  $("#live-filter").addEventListener("change", (e) => { liveState.filter = e.target.value; persistLiveUi(); draw(true); });
+  $("#live-date")?.addEventListener("change", (e) => {
+    liveState.viewDate = e.target.value || "";
+    persistLiveUi();
+    const note = $("#live-date-note");
+    if (note) note.textContent = liveState.viewDate ? "Đang xem lịch của ngày đã chọn." : "Chưa chọn ngày riêng — đang xem trực tiếp như thường lệ.";
+    draw(false);
+  });
+  $("#live-date-today")?.addEventListener("click", () => {
+    liveState.viewDate = "";
+    const input = $("#live-date"); if (input) input.value = "";
+    const note = $("#live-date-note"); if (note) note.textContent = "Chưa chọn ngày riêng — đang xem trực tiếp như thường lệ.";
+    persistLiveUi();
+    draw(false);
+  });
+  $("#live-window-chips")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-window]");
+    if (!btn) return;
+    liveState.window = liveWindowById(btn.dataset.window).id;
+    persistLiveUi();
+    draw(false);
+  });
   await draw(false);
   state.liveTimer = setInterval(() => draw(false), 60000);
 }
@@ -515,6 +927,30 @@ const sumBoxes = (s) => `<div class="sumgrid">
   <div class="fact-box"><div class="v">${num(s.avg_goals_for)}</div><div class="l">bàn thắng TB</div></div>
   <div class="fact-box"><div class="v">${num(s.avg_goals_against)}</div><div class="l">bàn thua TB</div></div>
   <div class="fact-box"><div class="v">${s.win_rate === null ? "—" : pct(s.win_rate, 0) + "%"}</div><div class="l">tỷ lệ thắng</div></div></div>`;
+
+/* Khối "Nhận định dự đoán" trong trang trận đã đồng bộ: dùng verdict/markets từ payload nếu có
+   (dự đoán lưu bằng mã mới); bản lưu cũ chưa có thì tính ngay từ λ đã lưu bằng mô hình trong live.js. */
+function verdictSectionHtml(p, m) {
+  let v = p.verdict, mk = p.markets, computedNote = "";
+  if ((!v || !mk) && window.TymexLive && p.lambda_home && p.lambda_away) {
+    const bv = TymexLive.buildVerdict(Number(p.lambda_home), Number(p.lambda_away), { homeName: m.home_name, awayName: m.away_name });
+    v = v || { picks: bv.picks, score: bv.score, reasoning: [], disclaimer: bv.disclaimer };
+    mk = mk || bv.markets;
+    computedNote = `<p class="small muted">Bản dự đoán đã lưu chưa kèm khối nhận định — các lựa chọn dưới đây được tính ngay từ λ đã lưu của chính dự đoán này.</p>`;
+  }
+  if (!v || !mk) return "";
+  const reasoning = (v.reasoning || []).length
+    ? `<ul class="factors">${v.reasoning.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+  return `<h3 style="margin-top:.8rem">Nhận định dự đoán</h3>${computedNote}
+    <p class="small muted">Nhận định cập nhật lúc ${esc(verdictClock())}</p>
+    <p class="small">Tỉ số dự đoán: <b class="num">${v.score.home}-${v.score.away}</b></p>
+    ${picksChips(v.picks)}
+    <div class="vd-h">Tài/Xỉu bàn thắng</div>
+    ${linesHtml(mk.lines, [1.5, 2.5, 3.5], ouPickFromPicks(v.picks), "bàn")}
+    <p class="small muted">Tổng bàn kỳ vọng: <b class="num">${num(mk.expected_total_goals)}</b> · Cơ hội kép: 1X ${fmtProb(mk.double_chance["1X"])} · 12 ${fmtProb(mk.double_chance["12"])} · X2 ${fmtProb(mk.double_chance["X2"])}</p>
+    ${reasoning}
+    <p class="vd-note">${esc(v.disclaimer || TymexLive.VERDICT_DISCLAIMER)}</p>`;
+}
 
 function predictionBlock(a) {
   const p = a.prediction, m = a.match;
@@ -540,6 +976,7 @@ function predictionBlock(a) {
       <div class="fact-box"><div class="v">${pick.home} - ${pick.away}</div><div class="l">tỷ số đơn lẻ hay gặp nhất, chỉ ${pct(pick.prob * 100)}% khả năng đúng</div></div>
       <div class="fact-box"><div class="v">${pct(p.over_2_5 * 100, 0)}%</div><div class="l">trên 2,5 bàn</div></div>
       <div class="fact-box"><div class="v">${pct(p.both_teams_score * 100, 0)}%</div><div class="l">cả hai đội cùng ghi bàn</div></div></div>
+    ${verdictSectionHtml(p, m)}
     <h3>Ma trận tỷ số</h3>${matrix}
     <h3 style="margin-top:.8rem">Các tỷ số khả dĩ nhất</h3>
     <p>${p.top_scores.map((t) => `<span class="num">${t.home}-${t.away}</span> (${pct(t.prob * 100)}%)`).join(" &nbsp; ")}</p>
@@ -641,7 +1078,7 @@ async function pageMatch(parts) {
   const load = async () => {
     const a = await api(`/matches/${id}/analysis?form_n=${n}`);
     const m = a.match, done = m.status === "FINISHED", has = m.home_score !== null && m.away_score !== null;
-    app.innerHTML = `<p><a class="muted" href="javascript:history.back()">‹ Quay lại</a></p>
+    app.innerHTML = `${backLinkHtml()}
       <section class="match-head"><div class="meta">${esc(m.league_name)}${m.matchday ? ` · Vòng ${m.matchday}` : ""}${m.season ? ` · Mùa ${m.season}/${String(m.season + 1).slice(2)}` : ""}
         ${a.is_test_data ? '<span class="tag-test">DỮ LIỆU KIỂM THỬ</span>' : ""}<br>${esc(relDay(m.utc_date))}, ${esc(fmtDate(m.utc_date, true))} lúc <b>${esc(fmtTime(m.utc_date))}</b> — múi giờ ${esc(tzLabel())}</div>
         <div class="versus"><div class="vteam home">${crest(m.home_crest, m.home_name)}<h2>${esc(m.home_name)}</h2><span class="role">Chủ nhà (sân nhà)</span></div>

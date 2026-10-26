@@ -1,7 +1,9 @@
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
-from app.cloud.export import publish
+from app.cloud.export import dedupe_export_matches, publish
 from app.cloud.supabase import SupabaseClient, SupabaseError
 from app.main import build_container
 from tests import fixtures
@@ -41,6 +43,93 @@ def test_publish_exports_everything_the_web_needs(container, now):
     assert any(k.startswith("standings:") for k in keys)
     teams = next(r for r in t["kv"] if r["key"] == "teams")["payload"]["teams"]
     assert teams and "search" in teams[0] and "leagues" in teams[0]
+
+
+def _fake_export_match(mid, league_id, provider, home, away, utc_date, *,
+                       status="SCHEDULED", home_score=None, away_score=None):
+    return {
+        "id": mid, "league_id": league_id, "league_name": f"Giải {league_id}", "league_code": f"L{league_id}",
+        "season": 2026, "matchday": 1, "stage": "REGULAR_SEASON", "utc_date": utc_date, "status": status,
+        "home_team_id": mid * 10 + 1, "away_team_id": mid * 10 + 2,
+        "home_name": home, "away_name": away, "home_short": None, "away_short": None,
+        "home_crest": None, "away_crest": None, "home_score": home_score, "away_score": away_score,
+        "home_ht": None, "away_ht": None, "winner": None, "provider": provider,
+    }
+
+
+def test_dedupe_export_matches_priority_and_non_duplicates():
+    scored = _fake_export_match(20, 2, "openfootball", "Central Cordoba", "River Plate",
+                                 "2026-10-20T20:00:00Z", status="FINISHED", home_score=2, away_score=1)
+    unscored = _fake_export_match(10, 1, "football-data.org", "Central Córdoba FC", "River Plate CF",
+                                  "2026-10-20T23:00:00Z")
+    reverse = _fake_export_match(30, 1, "espn", "River Plate", "Central Córdoba",
+                                 "2026-10-20T20:00:00Z", status="FINISHED", home_score=0, away_score=0)
+    other_date = _fake_export_match(40, 1, "espn", "Central Córdoba", "River Plate",
+                                    "2026-11-20T20:00:00Z")
+    out, removed = dedupe_export_matches([unscored, scored, reverse, other_date])
+    assert removed == 1
+    assert [m["id"] for m in out] == [20, 30, 40]       # bản có tỷ số thắng; đảo chiều/khác ngày giữ nguyên
+    assert out[0]["league_id"] == 2                      # giữ league_id của chính bản ghi được chọn
+
+    canonical = _fake_export_match(99, 1, "football-data.org", "Alpha FC", "Beta Club", "2026-10-21T20:00:00Z")
+    other_source = _fake_export_match(1, 2, "openfootball", "Alpha", "Beta", "2026-10-21T20:00:00Z")
+    out2, removed2 = dedupe_export_matches([other_source, canonical])
+    assert removed2 == 1 and out2[0]["id"] == 99         # ngang nhau về tỷ số/trạng thái -> ưu tiên nguồn chuẩn
+
+
+def test_publish_merges_duplicate_matches_before_upsert(now, capsys):
+    leagues = [{"id": 1, "provider": "football-data.org"}, {"id": 2, "provider": "openfootball"}]
+    rows_by_league = {
+        1: [
+            _fake_export_match(10, 1, "espn", "Central Córdoba FC", "River Plate CF", "2026-10-20T20:00:00Z"),
+            _fake_export_match(30, 1, "espn", "River Plate", "Central Córdoba", "2026-10-20T20:00:00Z",
+                               status="FINISHED", home_score=0, away_score=0),
+            _fake_export_match(40, 1, "espn", "Central Córdoba", "River Plate", "2026-11-20T20:00:00Z"),
+        ],
+        2: [
+            _fake_export_match(20, 2, "openfootball", "Central Cordoba", "River Plate", "2026-10-20T23:00:00Z",
+                               status="FINISHED", home_score=2, away_score=1),
+        ],
+    }
+
+    class FakeRepo:
+        def list_leagues(self):
+            return leagues
+
+        def query_matches(self, *, league_id, date_from, limit):
+            return rows_by_league[league_id]
+
+        def list_teams(self):
+            return []
+
+        def get_league(self, league_id):
+            return next(lg for lg in leagues if lg["id"] == league_id)
+
+        def get_standings(self, league_id):
+            return []
+
+        def list_predictions(self, *, kind, limit):
+            return []
+
+        def last_sync_overall(self):
+            return None
+
+        def counts(self):
+            return {"leagues": 2, "teams": 4, "matches": 4, "predictions": 0}
+
+    fake_container = SimpleNamespace(
+        repo=FakeRepo(),
+        analysis=SimpleNamespace(build=lambda match_id, n: None),
+        predictions=SimpleNamespace(summary=lambda kind: {"overall": {"n": 0}}),
+    )
+    client = FakeClient()
+    stats = publish(fake_container, client, now=now, run_backtest=False)
+    exported = client.tables["matches"]
+    assert stats["matches"] == 3 and len(exported) == 3
+    kept = next(m for m in exported if m["utc_date"] == "2026-10-20T23:00:00Z")
+    assert kept["id"] == 20 and kept["league_id"] == 2 and kept["home_score"] == 2
+    assert {m["id"] for m in exported} == {20, 30, 40}
+    assert "đã gộp 1 trận trùng" in capsys.readouterr().out
 
 
 def test_publish_runs_backtest_separately_from_live(container, now):

@@ -233,7 +233,7 @@ def predict(league_matches: list[dict], home_id: int, away_id: int, kickoff: str
     top = [{"home": i, "away": j, "prob": round(pr, 4)} for pr, i, j in cells[:5]]
     over25 = sum(v for i, r in enumerate(matrix) for j, v in enumerate(r) if i + j >= 3)
     btts = sum(v for i, r in enumerate(matrix) for j, v in enumerate(r) if i >= 1 and j >= 1)
-    return {
+    result = {
         "available": True, "model_version": MODEL_VERSION,
         "lambda_home": round(lam_h, 3), "lambda_away": round(lam_a, 3),
         "dixon_coles_rho": params.dixon_coles_rho,
@@ -250,3 +250,9 @@ def predict(league_matches: list[dict], home_id: int, away_id: int, kickoff: str
                                                     "league_avg_home", "league_avg_away")},
         "notes": ["Mô hình chỉ dựa trên tỷ số các trận đã kết thúc; không tự biết chấn thương, treo giò, đội hình, lịch dồn, thời tiết (tin vắng mặt nếu có chỉ hiện ở khối riêng, không đổi con số này)."],
     }
+    # Thị trường (Tài/Xỉu nhiều mốc, BTTS, cơ hội kép) + bản nhận định có cấu trúc, suy ra từ CHÍNH
+    # ma trận đầy đủ ở trên (import tại chỗ để tránh vòng phụ thuộc markets -> poisson).
+    from . import markets as _markets
+    result["markets"] = _markets.goal_lines(matrix=matrix)
+    result["verdict"] = _markets.build_verdict(result, home_name, away_name)
+    return result

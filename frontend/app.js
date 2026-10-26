@@ -241,6 +241,38 @@ const sumBoxes = (s) => `<div class="sumgrid">
   <div class="fact-box"><div class="v">${num(s.avg_goals_against)}</div><div class="l">bàn thua TB</div></div>
   <div class="fact-box"><div class="v">${s.win_rate === null ? "—" : pct(s.win_rate, 0) + "%"}</div><div class="l">tỷ lệ thắng</div></div></div>`;
 
+/* Khối "Nhận định dự đoán": dùng markets/verdict trong payload (dự đoán lưu bằng mã mới có sẵn hai khóa
+   này). Bản lưu cũ chưa có -> bỏ qua êm, không tự tính thay. */
+function verdictSectionHtml(p, m) {
+  const v = p.verdict, mk = p.markets;
+  if (!v || !mk) return "";
+  const fp = (x) => pct(x * 100, 0) + "%";
+  const fl = (x) => Number(x).toFixed(1).replace(".", ",");
+  const chip = (pick) => {
+    const cls = pick.strength === "Mạnh" ? "strong" : pick.strength === "Khá" ? "ok" : "consider";
+    return `<span class="pick-chip ${cls}">${esc(pick.selection)} · ${fp(pick.probability)} · ${esc(pick.strength)}</span>`;
+  };
+  const ouPick = (v.picks || []).find((x) => x.market === "goals_ou");
+  const ouMatch = ouPick ? /(\d+)[.,](\d+)/.exec(ouPick.selection || "") : null;
+  const ouLine = ouMatch ? Number(ouMatch[1] + "." + ouMatch[2]) : null;
+  const ouSide = ouPick && (ouPick.selection || "").startsWith("Tài") ? "Tài" : "Xỉu";
+  const lines = (mk.lines || []).filter((l) => [1.5, 2.5, 3.5].includes(l.line)).map((l) => {
+    const rec = ouLine !== null && Math.abs(ouLine - l.line) < 1e-9 ? ouSide : null;
+    return `<div class="ln-row"><span class="ln-line">${fl(l.line)} bàn</span>
+      <span class="ln-side ${rec === "Tài" ? "rec" : ""}">Tài ${fp(l.over)}${rec === "Tài" ? " ★" : ""}</span>
+      <span class="ln-side ${rec === "Xỉu" ? "rec" : ""}">Xỉu ${fp(l.under)}${rec === "Xỉu" ? " ★" : ""}</span></div>`;
+  }).join("");
+  const reasoning = (v.reasoning || []).length ? `<ul class="factors">${v.reasoning.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+  return `<h3 style="margin-top:.8rem">Nhận định dự đoán</h3>
+    <p class="small">${esc(v.summary || "")}</p>
+    <div class="pick-chips">${(v.picks || []).map(chip).join("") || '<span class="small muted">Không có lựa chọn nào đạt xác suất 50%.</span>'}</div>
+    <div class="vd-h">Tài/Xỉu bàn thắng</div>
+    <div class="ln-table">${lines}</div>
+    <p class="small muted">Tổng bàn kỳ vọng: <b class="num">${num(mk.expected_total_goals)}</b> · Cả hai đội ghi bàn: ${fp(mk.btts.yes)} · Cơ hội kép: 1X ${fp(mk.double_chance["1X"])} · 12 ${fp(mk.double_chance["12"])} · X2 ${fp(mk.double_chance["X2"])}</p>
+    ${reasoning}
+    <p class="vd-note">${esc(v.disclaimer || "Nhận định tham khảo từ mô hình thống kê — không phải lời khuyên cá cược.")}</p>`;
+}
+
 function predictionBlock(a) {
   const p = a.prediction, m = a.match;
   if (!p.available) {
@@ -265,6 +297,7 @@ function predictionBlock(a) {
       <div class="fact-box"><div class="v">${pick.home} - ${pick.away}</div><div class="l">tỷ số đơn lẻ hay gặp nhất, chỉ ${pct(pick.prob * 100)}% khả năng đúng</div></div>
       <div class="fact-box"><div class="v">${pct(p.over_2_5 * 100, 0)}%</div><div class="l">trên 2,5 bàn</div></div>
       <div class="fact-box"><div class="v">${pct(p.both_teams_score * 100, 0)}%</div><div class="l">cả hai đội cùng ghi bàn</div></div></div>
+    ${verdictSectionHtml(p, m)}
     <h3>Ma trận tỷ số</h3>${matrix}
     <h3 style="margin-top:.8rem">Các tỷ số khả dĩ nhất</h3>
     <p>${p.top_scores.map((t) => `<span class="num">${t.home}-${t.away}</span> (${pct(t.prob * 100)}%)`).join(" &nbsp; ")}</p>
