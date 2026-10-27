@@ -111,6 +111,16 @@ Bản web là một **PWA** cài đặt được lên điện thoại: mở tran
 - **Nghĩa vụ khi phát hành**: hằng số `VERSION` trong `web/sw.js` phải luôn khớp hậu tố `?v=` trong `web/index.html` — tăng cái này thì tăng cả cái kia.
 - Lưu ý: các file PNG trong `web/icons/` là file nhị phân, **không** đẩy lên GitHub qua kênh text được — chúng nằm trong cây làm việc ở máy và cần được thêm bằng GitHub Desktop (file SVG vẫn đủ để cài đặt trong lúc chờ bổ sung PNG).
 
+## Bổ sung (2026-10-28): Tỷ lệ thị trường có trước giờ bóng lăn
+
+Khối **Thị trường cược** ở trang phân tích một trận trước đây thực tế chỉ hiện sau khi trận kết thúc: trận đã đá luôn có kèo đóng cửa lấy từ dữ liệu lịch sử (cột AvgC/B365C của football-data.co.uk), trong khi kèo trước trận chỉ được lấy cho các trận đá trong vòng 30 giờ tới, với trần 3 lần gọi/lần chạy cho cả 5 giải — phần lớn trận sắp đá chưa bao giờ có kèo. Nay pipeline kèo (`app/odds/runner.py`, cấu hình mặc định trong `scripts/cloud_sync.py`) được nới:
+
+- **Cửa sổ 72 giờ** (`ODDS_HOURS_AHEAD=72`): mọi trận trong 3 ngày tới đều được lấy kèo trước giờ đá; phần vắng mặt/chấn thương dùng chung cửa sổ này.
+- **Trần 5 lần gọi/lần chạy** cho The Odds API (`ODDS_MAX_CALLS=5`), cổng làm mới: giải có trận trong 3 giờ tới làm mới tối đa mỗi **180 phút** (`ODDS_NEAR_INTERVAL_MIN`), giải còn xa mỗi **1440 phút** (`ODDS_FAR_INTERVAL_MIN`).
+- Vẫn an toàn với gói 500 credit/tháng: The Odds API tính credit theo **lần gọi mỗi giải** (một lần gọi lấy kèo cho mọi trận của giải trong cửa sổ), không tính theo trận, và mọi lần gọi đều dừng khi hạn mức còn dưới `ODDS_MIN_REMAINING=40`.
+
+Kèm theo: thông báo khi chưa có kèo nói rõ “Tỷ lệ thị trường được cập nhật tự động cho các trận trong vòng 72 giờ trước giờ bóng lăn”; và mỗi hàng ở trang **Lịch sử dự đoán** được gắn thêm tỉ lệ thị trường (khối `market` trong kv `predictions:live`, do `app/cloud/export.py` gắn khi xuất bản) hiện ngay dưới tên trận — xác suất đã chuẩn hóa kèm tỉ lệ gốc.
+
 ## 6. AI viết bài (tùy chọn)
 
 Để trống thì mọi thứ vẫn chạy. Nếu thêm `ANTHROPIC_API_KEY` vào `.env`, trang trận sẽ có nút **Viết bài bằng AI**: hệ thống gửi cho AI một bản JSON số liệu đã tính, yêu cầu viết bài tiếng Việt và cấm thêm thông tin ngoài bản đó. Bài được lưu kèm thời điểm và mã dữ liệu; khi dữ liệu đổi sẽ báo "bài đã cũ" để tạo lại. Chỉ tốn phí mỗi lần bạn bấm. Tên mô hình đặt bằng `AI_MODEL` trong `.env`.

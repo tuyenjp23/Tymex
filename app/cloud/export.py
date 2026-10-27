@@ -9,6 +9,7 @@ import re
 from datetime import timedelta
 
 from ..api.routes import KNOWN_LEAGUES, public_match   # noqa: F401  (KNOWN_LEAGUES giữ để tiện tham chiếu)
+from ..odds.compare import market_probabilities
 from ..utils import search_key, to_iso, utcnow
 
 PAST_DAYS = 30        # phân tích sẵn cho trận đã đá trong N ngày qua
@@ -78,6 +79,26 @@ def dedupe_export_matches(matches: list[dict]) -> tuple[list[dict], int]:
 
 def _kv(key: str, payload, now: str) -> dict:
     return {"key": key, "payload": payload, "updated_at": now}
+
+
+def _with_market(repo, row: dict) -> dict:
+    """Gắn thêm khối `market` gọn vào một hàng dự đoán 'live' nếu trận đã có tỷ lệ cược trong CSDL.
+
+    Kèo có thể đã được cập nhật TRƯỚC giờ bóng lăn (runner tỷ lệ cược) hoặc là kèo đóng cửa của trận đã đá
+    (nhập từ lịch sử) — cả hai đều là ảnh chụp mới nhất đang có. Hàng không có kèo giữ nguyên, không thêm
+    trường nào, để web cũ/mới đều đọc được (tương thích ngược)."""
+    odds = repo.get_odds(row["match_id"])
+    if not odds:
+        return row
+    ph, pd, pa, _margin = market_probabilities(odds["odds_home"], odds["odds_draw"], odds["odds_away"])
+    out = dict(row)
+    out["market"] = {
+        "odds": {"home": odds["odds_home"], "draw": odds["odds_draw"], "away": odds["odds_away"]},
+        "probs": {"home": round(ph, 4), "draw": round(pd, 4), "away": round(pa, 4)},
+        "source": odds["source"],
+        "updated_at": odds["updated_at"],
+    }
+    return out
 
 
 def match_row(m: dict, now: str) -> dict:
@@ -159,6 +180,8 @@ def publish(container, client, now=None, *, run_backtest: bool = True, outrights
     for kind in ("live", "backtest"):
         kv.append(_kv(f"summary:{kind}", predictions.summary(kind), stamp))
         rows = repo.list_predictions(kind=kind, limit=150)
+        if kind == "live":
+            rows = [_with_market(repo, r) for r in rows]   # kèm tỷ lệ thị trường nếu trận đã có kèo (kể cả trước giờ đá)
         kv.append(_kv(f"predictions:{kind}", {"predictions": rows, "count": len(rows)}, stamp))
     kv.append(_kv("status", {"last_sync": repo.last_sync_overall(), "counts": repo.counts(), "published_at": stamp,
                              "is_test_data": any(l["provider"] == "fixture" for l in leagues)}, stamp))

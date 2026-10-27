@@ -22,7 +22,7 @@ def build_availability_block(absences: list[dict], prediction: dict | None, matc
         return {"available": False, "reason": "Trận đã/đang diễn ra: không hiển thị danh sách vắng mặt (không có dữ liệu tại thời điểm trước trận)."}
     if not absences:
         return {"available": False,
-                "reason": "Chưa có tin vắng mặt cho trận này (cần API_FOOTBALL_KEY và trận nằm trong khung 30 giờ tới; "
+                "reason": "Chưa có tin vắng mặt cho trận này (cần API_FOOTBALL_KEY và trận nằm trong khung 72 giờ tới; "
                           "nguồn có thể chưa cập nhật). Không có tin không có nghĩa là mọi cầu thủ đều sẵn sàng."}
     teams = {}
     for side, tid, name in (("home", match["home_team_id"], match["home_name"]), ("away", match["away_team_id"], match["away_name"])):

@@ -294,6 +294,28 @@ def test_refresh_upcoming_odds_skips_far_matches_and_stops_on_low_credit(repo):
     assert len(low.calls) == 1 and any("credit còn lại thấp" in x for x in out["skipped"])
 
 
+def test_refresh_upcoming_odds_default_window_covers_48h_but_not_100h(repo):
+    """Cửa sổ mặc định 72 giờ: trận cách 48 giờ đã được lấy kèo TRƯỚC giờ đá; trận cách 100 giờ thì chưa."""
+    from datetime import timedelta
+    from app.odds.runner import refresh_upcoming_odds
+    from app.utils import to_iso, utcnow
+    now = utcnow()
+    kick48 = to_iso(now + timedelta(hours=48))
+    lid = _upcoming_setup(repo, kick48)
+    lid2 = repo.upsert_league(P, LeagueDTO(code="PD", name="Primera Division"))
+    repo.upsert_team(P, TeamDTO("90", "Sevilla FC")); repo.upsert_team(P, TeamDTO("91", "Girona FC"))
+    repo.upsert_matches(P, lid2, [MatchDTO(external_id="p100", season=2026, matchday=9, stage="REGULAR_SEASON",
+                                           utc_date=to_iso(now + timedelta(hours=100)), status="TIMED",
+                                           home=TeamDTO("90", "Sevilla FC"), away=TeamDTO("91", "Girona FC"))])
+    api = FakeApi([_ev("Manchester United", "Fulham", kick48)])
+    out = refresh_upcoming_odds(repo, [api], now=now, log=lambda s: None)   # không ghi đè tham số → dùng mặc định mới
+    assert api.calls == ["PL"] and out["matched"] == 1
+    near_match = repo.query_matches(league_id=lid, statuses=("TIMED",))[0]
+    assert repo.get_odds(near_match["id"]) is not None                       # kèo đã có 48 giờ trước giờ đá
+    far_match = repo.query_matches(league_id=lid2, statuses=("TIMED",))[0]
+    assert repo.get_odds(far_match["id"]) is None                            # ngoài cửa sổ 72 giờ: chưa gọi nguồn
+
+
 def test_api_football_parses_fixtures_and_paged_odds():
     import httpx
     from datetime import datetime, timezone
@@ -377,6 +399,8 @@ def test_market_block_levels_and_analysis_integration(repo, settings, now):
     assert b["level"] == "large" and "lời khuyên cá cược" in b["verdict"] and b["margin"] > 0
     assert build_market_block(None, near, "A", "B")["available"] is False
     assert build_market_block(odds, {"available": False}, "A", "B")["level"] == "none"
+    empty = build_market_block(None, None, "A", "B")
+    assert "72 giờ trước giờ bóng lăn" in empty["reason"] and "THE_ODDS_API_KEY" not in empty["reason"]
     from tests import fixtures
     c = build_container(settings, provider=None)
     fixtures.seed(c.repo, now)

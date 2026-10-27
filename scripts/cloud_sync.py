@@ -6,9 +6,14 @@ Tùy chọn: LEAGUES (mặc định PL,PD,BL1,SA,FL1), SYNC_PREVIOUS_SEASON.
 Nhập lịch sử miễn phí (football-data.co.uk, openfootball): HISTORY_ENABLED (mặc định bật), HISTORY_SEASONS (mặc định 5),
 HISTORY_LEAGUES (mặc định tất cả: PL,ELC,PD,SD,BL1,BL2,SA,SB,FL1). Lỗi của phần lịch sử KHÔNG làm hỏng lần chạy.
 Tỷ lệ cược trận sắp đá, chuỗi nguồn dự phòng (đặt khóa nào thì dùng nguồn đó, mỗi nguồn MỘT khóa):
-  THE_ODDS_API_KEY (500 credit/tháng; ODDS_MAX_CALLS=3, ODDS_MIN_REMAINING=40) rồi API_FOOTBALL_KEY (100 request/ngày;
+  THE_ODDS_API_KEY (500 credit/tháng; ODDS_MAX_CALLS=5, ODDS_MIN_REMAINING=40) rồi API_FOOTBALL_KEY (100 request/ngày;
   API_FOOTBALL_MAX_CALLS=12, API_FOOTBALL_MIN_REMAINING=15). Đổi thứ tự bằng ODDS_PROVIDER_ORDER="the-odds-api,api-football".
-  ODDS_LEAGUES (mặc định PL,PD,BL1,SA,FL1), ODDS_HOURS_AHEAD (30), ODDS_NEAR_INTERVAL_MIN (120), ODDS_FAR_INTERVAL_MIN (1440). Lỗi phần này cũng KHÔNG làm hỏng lần chạy.
+  ODDS_LEAGUES (mặc định PL,PD,BL1,SA,FL1), ODDS_HOURS_AHEAD (72), ODDS_NEAR_INTERVAL_MIN (180), ODDS_FAR_INTERVAL_MIN (1440). Lỗi phần này cũng KHÔNG làm hỏng lần chạy.
+  Vì sao các con số này an toàn với hạn mức: The Odds API tính credit theo LẦN GỌI MỖI GIẢI (một lần gọi lấy kèo cho mọi trận
+  của giải trong cửa sổ), không tính theo trận; cửa sổ 72 giờ + trần 5 lần gọi/lần chạy cho 5 giải và các cổng theo thời gian
+  (giải gần giờ đá làm mới tối đa mỗi 180 phút, giải còn xa mỗi 1440 phút) cùng ngưỡng dừng ODDS_MIN_REMAINING=40 giữ tổng
+  mức dùng hàng tháng dưới gói 500 credit. Phần vắng mặt/chấn thương bên dưới dùng chung ODDS_HOURS_AHEAD nên cũng nhìn
+  trước 72 giờ (vẫn bị chặn bởi ABSENCES_MAX_CALLS và cổng ABSENCES_INTERVAL_MIN=360 phút).
 Dự đoán vô địch (kv 'outrights', chỉ ở lần chạy đầy đủ): kèo outright của The Odds API chỉ lấy mới khi dữ liệu cũ quá 36 giờ,
   tối đa ODDS_OUTRIGHTS_MAX_CALLS (mặc định 10) lần gọi và dừng khi hạn mức còn < 60; mô phỏng Monte Carlo chạy lại mỗi lần. Lỗi cũng KHÔNG làm hỏng lần chạy.
 Vắng mặt/chấn thương (cần API_FOOTBALL_KEY): ABSENCES_ENABLED (1; đặt 0 để tắt), ABSENCES_MAX_CALLS (6 request/lần chạy, 1 request/giải/ngày có trận),
@@ -106,7 +111,7 @@ def main() -> int:
     providers = []
     if (env("THE_ODDS_API_KEY") or "").strip():
         from app.odds.the_odds_api import TheOddsApi   # noqa: PLC0415
-        providers.append(TheOddsApi(env("THE_ODDS_API_KEY"), max_calls_per_run=int(env("ODDS_MAX_CALLS") or 3),
+        providers.append(TheOddsApi(env("THE_ODDS_API_KEY"), max_calls_per_run=int(env("ODDS_MAX_CALLS") or 5),
                                     min_remaining=int(env("ODDS_MIN_REMAINING") or 40)))
     if (env("API_FOOTBALL_KEY") or "").strip():
         from app.odds.api_football import ApiFootball   # noqa: PLC0415
@@ -120,7 +125,7 @@ def main() -> int:
             res = refresh_upcoming_odds(
                 container.repo, providers,
                 codes=[c.strip() for c in (env("ODDS_LEAGUES") or "PL,PD,BL1,SA,FL1").split(",") if c.strip()],
-                hours_ahead=float(env("ODDS_HOURS_AHEAD") or 30), near_interval_min=int(env("ODDS_NEAR_INTERVAL_MIN") or 120),
+                hours_ahead=float(env("ODDS_HOURS_AHEAD") or 72), near_interval_min=int(env("ODDS_NEAR_INTERVAL_MIN") or 180),
                 far_interval_min=int(env("ODDS_FAR_INTERVAL_MIN") or 1440))
             print(f"Tỷ lệ cược: {res['calls']} request, ghép được {res['matched']} trận, "
                   f"đã dùng {res['used']}, còn lại {res['remaining']}")
@@ -137,7 +142,7 @@ def main() -> int:
             res = refresh_absences(
                 container.repo, api_fb,
                 codes=[c.strip() for c in (env("ODDS_LEAGUES") or "PL,PD,BL1,SA,FL1").split(",") if c.strip()],
-                hours_ahead=float(env("ODDS_HOURS_AHEAD") or 30), interval_min=int(env("ABSENCES_INTERVAL_MIN") or 360),
+                hours_ahead=float(env("ODDS_HOURS_AHEAD") or 72), interval_min=int(env("ABSENCES_INTERVAL_MIN") or 360),
                 max_calls=int(env("ABSENCES_MAX_CALLS") or 6), min_remaining=int(env("API_FOOTBALL_MIN_REMAINING") or 15))
             print(f"Vắng mặt: {res['calls']} request, {res['matched']} cầu thủ")
             for line in (res["skipped"] + res["errors"])[:10]:

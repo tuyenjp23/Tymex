@@ -10,7 +10,7 @@
    Mỗi đợt phát hành tăng ?v= thì phải tăng cả VERSION (tên cache đổi → cache cũ bị xóa). */
 "use strict";
 
-const VERSION = "20261026f";
+const VERSION = "20261026g";
 const CACHE = `tymex-shell-${VERSION}`;
 const PRECACHE = ["/", "/index.html", "/manifest.json", "/icons/icon.svg"];
 

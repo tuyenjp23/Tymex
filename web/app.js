@@ -1146,7 +1146,7 @@ async function pageHistory(_, params) {
   }
   if (list.predictions.length) {
     app.insertAdjacentHTML("beforeend", `<section class="block"><h2>Từng dự đoán</h2><div class="t-scroll"><table class="t"><thead><tr><th>Trận</th><th>Đã lưu lúc</th><th>Dự đoán (nhà/hòa/khách)</th><th>Kết quả</th><th></th></tr></thead><tbody>${list.predictions.map((p) =>
-      `<tr><td><a href="#/match/${p.match_id}"><u>${esc(p.home_name)} - ${esc(p.away_name)}</u></a><div class="small muted">${esc(p.league_name)} · ${esc(fmtDate(p.utc_date))}</div></td>
+      `<tr><td><a href="#/match/${p.match_id}"><u>${esc(p.home_name)} - ${esc(p.away_name)}</u></a><div class="small muted">${esc(p.league_name)} · ${esc(fmtDate(p.utc_date))}</div>${p.market ? `<div class="small muted">Thị trường: Nhà ${pct(p.market.probs.home * 100, 0)}% · Hòa ${pct(p.market.probs.draw * 100, 0)}% · Khách ${pct(p.market.probs.away * 100, 0)}% (tỉ lệ ${num(p.market.odds.home)}/${num(p.market.odds.draw)}/${num(p.market.odds.away)})</div>` : ""}</td>
       <td class="small">${esc(fmtStamp(p.created_at))}</td><td class="num">${pct(p.p_home * 100, 0)}/${pct(p.p_draw * 100, 0)}/${pct(p.p_away * 100, 0)}% · ${p.predicted_home}-${p.predicted_away}</td>
       <td class="num">${p.actual_outcome ? `${p.home_score}-${p.away_score}` : p.status === "FINISHED" ? "Không chấm" : "Chưa đá"}</td>
       <td>${p.actual_outcome ? `<span class="chip ${p.correct ? "W" : "L"}">${p.correct ? "Đúng" : "Sai"}</span>` : ""}</td></tr>`).join("")}</tbody></table></div></section>`);

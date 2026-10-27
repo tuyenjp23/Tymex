@@ -132,6 +132,63 @@ def test_publish_merges_duplicate_matches_before_upsert(now, capsys):
     assert "đã gộp 1 trận trùng" in capsys.readouterr().out
 
 
+def test_publish_enriches_live_predictions_with_market(now):
+    """Hàng dự đoán 'live' có kèo trong CSDL thì được gắn khối market gọn (xác suất tổng ≈ 1);
+    hàng không có kèo giữ nguyên, và hàng gốc của repo không bị sửa tại chỗ."""
+    leagues = [{"id": 1, "provider": "football-data.org"}]
+    pred_with = {"id": 11, "match_id": 101, "kind": "live", "p_home": 0.5, "p_draw": 0.3, "p_away": 0.2}
+    pred_without = {"id": 12, "match_id": 102, "kind": "live", "p_home": 0.4, "p_draw": 0.3, "p_away": 0.3}
+    odds_by_match = {101: {"match_id": 101, "source": "the-odds-api:6", "odds_home": 2.0, "odds_draw": 3.4,
+                           "odds_away": 3.8, "updated_at": "2026-10-26T00:00:00Z"}}
+
+    class FakeRepo:
+        def list_leagues(self):
+            return leagues
+
+        def query_matches(self, *, league_id, date_from, limit):
+            return []
+
+        def list_teams(self):
+            return []
+
+        def get_league(self, league_id):
+            return leagues[0]
+
+        def get_standings(self, league_id):
+            return []
+
+        def list_predictions(self, *, kind, limit):
+            return [pred_with, pred_without] if kind == "live" else []
+
+        def get_odds(self, match_id):
+            return odds_by_match.get(match_id)
+
+        def last_sync_overall(self):
+            return None
+
+        def counts(self):
+            return {"leagues": 1, "teams": 0, "matches": 0, "predictions": 2}
+
+    fake_container = SimpleNamespace(
+        repo=FakeRepo(),
+        analysis=SimpleNamespace(build=lambda match_id, n: None),
+        predictions=SimpleNamespace(summary=lambda kind: {"overall": {"n": 0}}),
+    )
+    client = FakeClient()
+    publish(fake_container, client, now=now, run_backtest=False)
+    kv = {r["key"]: r["payload"] for r in client.tables["kv"]}
+    rows = {r["match_id"]: r for r in kv["predictions:live"]["predictions"]}
+    m = rows[101]["market"]
+    assert m["odds"] == {"home": 2.0, "draw": 3.4, "away": 3.8}
+    assert m["source"] == "the-odds-api:6" and m["updated_at"] == "2026-10-26T00:00:00Z"
+    assert abs(m["probs"]["home"] + m["probs"]["draw"] + m["probs"]["away"] - 1) < 1e-3
+    assert m["probs"]["home"] > m["probs"]["away"]
+    assert "market" not in rows[102]                     # không có kèo → không thêm trường (tương thích ngược)
+    assert "market" not in pred_with                     # không sửa tại chỗ hàng của repo
+    bt_rows = kv["predictions:backtest"]["predictions"]
+    assert all("market" not in r for r in bt_rows)       # chỉ enrich cho kind 'live'
+
+
 def test_publish_runs_backtest_separately_from_live(container, now):
     client = FakeClient()
     publish(container, client, now=now)

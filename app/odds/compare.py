@@ -14,7 +14,7 @@ def market_probabilities(odds_home: float, odds_draw: float, odds_away: float) -
 def build_market_block(odds: dict | None, prediction: dict | None, home_name: str, away_name: str) -> dict:
     if not odds:
         return {"available": False,
-                "reason": "Chưa có tỷ lệ cược cho trận này (cần khóa THE_ODDS_API_KEY và trận nằm trong khung thời gian đang được cập nhật)."}
+                "reason": "Chưa có tỷ lệ cược cho trận này. Tỷ lệ thị trường được cập nhật tự động cho các trận trong vòng 72 giờ trước giờ bóng lăn."}
     ph, pd, pa, margin = market_probabilities(odds["odds_home"], odds["odds_draw"], odds["odds_away"])
     block = {"available": True, "source": odds["source"], "updated_at": odds["updated_at"],
              "market": {"home": round(ph, 4), "draw": round(pd, 4), "away": round(pa, 4)},

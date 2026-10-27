@@ -21,8 +21,8 @@ UPCOMING = ("SCHEDULED", "TIMED")
 DEFAULT_CODES = ["PL", "PD", "BL1", "SA", "FL1"]
 
 
-def refresh_upcoming_odds(repo, providers: Sequence, *, now=None, hours_ahead: float = 30, near_hours: float = 3,
-                          far_interval_min: int = 1440, near_interval_min: int = 120, codes: list[str] | None = None,
+def refresh_upcoming_odds(repo, providers: Sequence, *, now=None, hours_ahead: float = 72, near_hours: float = 3,
+                          far_interval_min: int = 1440, near_interval_min: int = 180, codes: list[str] | None = None,
                           log: Callable[[str], None] = print) -> dict:
     now = now or utcnow()
     providers = [p for p in providers if p.is_configured()]
